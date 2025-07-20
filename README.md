@@ -1,5 +1,9 @@
-exhale
+exhale edit
 ======
+
+This fork of exhale has custom experimental features do not use for archiving!.
+
+First experimental feature is tonal encoding and tuning constants.
 
 exhale, which is an acronym for "Ecodis eXtended High-efficiency And
 Low-complexity Encoder", is a lightweight library and application to
