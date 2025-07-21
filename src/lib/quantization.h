@@ -17,7 +17,7 @@
 // constants, experimental macros
 #define FOUR_LOG102   13.28771238 // 4 / log10 (2)
 #define SF_INDEX_MAX    SCHAR_MAX
-#define SF_QUANT_OFFSET 0.4 // for scale fac DS Change .4
+#define SF_QUANT_OFFSET 0.4783662 // for scale fac DS Change .4
 #define SF_THRESH_NEG  0.92044821 // round -1.5 dB
 #define SF_THRESH_POS  1.09460356 // round +1.5 dB
 #define SFB_QUANT_OFFSET 0.496094 // 13 - 29^(3/4)

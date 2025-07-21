@@ -16,7 +16,7 @@
 
 // constants, experimental macros
 #define BA_EPS                  1
-#define BA_MORE_CBR            1 // DS change 1 1: force more constant bit-rate (CBR, experimental!)
+#define BA_MORE_CBR            0 // DS change 1 1: force more constant bit-rate (CBR, experimental!)
 
 // class for audio bit-allocation
 class BitAllocator
@@ -34,6 +34,12 @@ private:
     // ADD: New member variable for tonality
     float    m_tonalityIndex[USAC_MAX_NUM_CHANNELS][MAX_NUM_SWB_LONG];
     
+    // ADD: New member variable for Minimum SNR model
+    double   m_sfbMinSnr[USAC_MAX_NUM_CHANNELS][MAX_NUM_SWB_LONG];
+
+    // ADD: New private method for Minimum SNR calculation
+    void initMinSnr (const unsigned nChannels, const unsigned samplingRate, const long bitrate, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS]);
+
 public:
     
     // constructor
@@ -48,16 +54,20 @@ public:
     uint8_t       getScaleFac (const uint32_t sfbStepSize, const int32_t* const sfbSignal, const uint8_t sfbWidth,
                                const uint32_t sfbRmsValue);
     unsigned initAllocMemory  (LinearPredictor* const linPredictor, const uint8_t numSwb, const uint8_t bitRateMode);
+    
+    // MODIFY: Add bitrate parameter for Min SNR calculation
     unsigned initSfbStepSizes (const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS], const uint8_t numSwbShort,
                                const uint32_t specAnaStats[USAC_MAX_NUM_CHANNELS],
                                const uint32_t tempAnaStats[USAC_MAX_NUM_CHANNELS],
                                const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,
-                               const unsigned lfeChannelIndex, const unsigned ad = 0u, const bool tnsDisabled = false);
+                               const unsigned lfeChannelIndex, const unsigned ad = 0u, const bool tnsDisabled = false, const long bitrate = 64000);
     unsigned imprSfbStepSizes (const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS], const uint8_t numSwbShort,
                                const int32_t* const mdctSpec[USAC_MAX_NUM_CHANNELS], const unsigned nSamplesInFrame,
                                const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,
                                const unsigned firstChannelIndex, const uint8_t* const sfm, const bool commonWindow,
                                const uint8_t* const sfbStereoData = nullptr, const uint8_t stereoConfig = 0);
+
+
 
     // ADD: New method declaration
     float estimateTonality(const int32_t* mdctSpec, const uint16_t* sfbOffsets,

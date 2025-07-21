@@ -25,8 +25,8 @@
 #include "tempAnalysis.h"
 
 // constant and experimental macro
-#define WIN_SCALE double (1 << 24) //DS change to 24
-#define EE_MORE_MSE              5 // DS change to 5 1-9: MSE optimized encoding with TNS disabled starting at bit-rate mode 1-9
+#define WIN_SCALE double (1 << 23) //DS change to 24
+#define EE_MORE_MSE              0 // DS change to 5 1-9: MSE optimized encoding with TNS disabled starting at bit-rate mode 1-9
 
 // channelConfigurationIndex setup
 typedef enum USAC_CCI : signed char
@@ -122,6 +122,8 @@ private:
   int16_t         m_tranLocCurr[USAC_MAX_NUM_CHANNELS];
   int16_t         m_tranLocNext[USAC_MAX_NUM_CHANNELS];
   LappedTransform m_transform; // time-frequency transform
+
+    unsigned        m_targetBandwidth; // ADD THIS LINE
 
   // helper functions
   unsigned applyTnsToWinGroup (SfbGroupData& grpData, const uint8_t grpIndex, const uint8_t maxSfb, TnsData& tnsData,

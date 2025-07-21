@@ -12,6 +12,42 @@
 #include "exhaleLibPch.h"
 #include "exhaleEnc.h"
 
+// ==========================================================================================
+// CHANGE 1: Add a new helper function to calculate the target bandwidth.
+// This function centralizes all the rule-based logic for both standard and SBR modes.
+// Place this function near the top of the file with the other static helper functions.
+// ==========================================================================================
+static unsigned getBandwidthForBitrateMode(const unsigned bitRateMode, const unsigned coreSampleRate, const bool isSbrMode)
+{
+    if (isSbrMode) // HE-AAC (SBR) Modes 'a'-'g' - Less aggressive cutoffs
+    {
+        // For SBR, the bandwidth refers to the core coder's bandwidth.
+        // It's crucial to keep this clean for good SBR performance.
+        switch (bitRateMode)
+        {
+            case 0: return 8200;  // Mode 'a' (was 6400)
+            case 1: return 9600;  // Mode 'b' (was 7000)
+            case 2: return 11000;  // Mode 'c' (was 8200)
+            case 3: return 12500; // Mode 'd' (was 9600)
+            default: return 0;    // Modes 'e'-'g' use full core bandwidth
+        }
+    }
+    else // AAC-LC Modes 0-9 - Less aggressive cutoffs
+    {
+        switch (bitRateMode)
+        {
+            case 0: return 17000; // (was 14000)
+            case 1: return 18500; // (was 15500)
+            case 2: return 19800; // (was 17000)
+            case 3: return 20000; // (was 18500)
+            case 4: return 20000; // Unchanged, already at Nyquist for 44.1/48k
+            default: return 0; // Modes 5-9 use full available bandwidth
+        }
+    }
+}
+
+
+
 // static helper functions
 static double modifiedBesselFunctionOfFirstKind (const double x)
 {
@@ -774,11 +810,34 @@ unsigned ExhaleEncoder::psychBitAllocation () // perceptual bit-allocation via s
   const unsigned lfeChannelIndex = (m_channelConf >= CCI_6_CH ? __max (5, nChannels - 1) : USAC_MAX_NUM_CHANNELS);
   const bool     useMaxBandwidth = (samplingRate < 37566 || m_shiftValSBR > 0);
   const uint8_t  maxSfbLong      = (useMaxBandwidth ? m_numSwbLong : brModeAndFsToMaxSfbLong (m_bitRateMode, samplingRate));
-  const uint16_t scaleSBR        = (m_shiftValSBR > 0 || m_nonMpegExt ? sbrRateOffset[m_bitRateMode] : 0); // -25% rate
-  const uint64_t scaleSr         = (samplingRate < 27713 ? (samplingRate < 23004 ? 32 : 34) - __min (3 << m_shiftValSBR, m_bitRateMode)
-                                   : (m_bitRateMode != 3 && samplingRate < 37566 ? 36 : 37) - 4 + 4 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2)) - (nChannels >> 1);
-  const uint64_t scaleBr         = (m_bitRateMode == 0 || m_frameCount <= 1 ? __min (32, 17u + (((samplingRate + (1 << 11)) >> 12) << 1) - (nChannels >> 1))
-                                   : scaleSr - eightTimesSqrt256Minus[256 - m_bitRateMode] - __min (3, (m_bitRateMode - 1) >> 1)) + scaleSBR;
+  
+    // ==========================================================================================
+    // CHANGE 2: Add the simple bitrate compensation factor.
+    // ==========================================================================================
+    double bandwidthCompFactor = 1.0;
+    if (m_targetBandwidth > 0 && m_numSwbLong > maxSfbLong)
+    {
+        // Calculate how much of the spectrum was cut off and create a factor to compensate.
+        // We use sqrt to make the compensation less aggressive than a linear 1:1 ratio.
+        bandwidthCompFactor = sqrt((double)m_numSwbLong / __max(1, maxSfbLong));
+    }
+
+   // const uint16_t scaleSBR        = (m_shiftValSBR > 0 || m_nonMpegExt ? sbrRateOffset[m_bitRateMode] : 0); // -25% rate
+   // const uint64_t scaleSr         = (samplingRate < 27713 ? (samplingRate < 23004 ? 32 : 34) - __min (3 << m_shiftValSBR, m_bitRateMode)
+  //                                   : (m_bitRateMode != 3 && samplingRate < 37566 ? 36 : 37) - 4 + 4 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2)) - (nChannels >> 1);
+// end brcf
+    
+    const uint16_t scaleSBR        = (m_shiftValSBR > 0 || m_nonMpegExt ? sbrRateOffset[m_bitRateMode] : 0); // -25% rate
+    const uint64_t scaleSr           = (samplingRate < 27713 ? (samplingRate < 23004 ? 32 : 34) - __min (3 << m_shiftValSBR, m_bitRateMode)
+                                        : (m_bitRateMode != 3 && samplingRate < 37566 ? 36 : 37) - 4 + 4 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2)) - (nChannels >> 1);
+    // ==========================================================================================
+    // CHANGE 3: Apply the compensation factor to the main bit allocation variable.
+    // ==========================================================================================
+    uint64_t scaleBr           = (m_bitRateMode == 0 || m_frameCount <= 1 ? __min (32, 17u + (((samplingRate + (1 << 11)) >> 12) << 1) - (nChannels >> 1))
+                                        : scaleSr - (eightTimesSqrt256Minus[256 - m_bitRateMode] *.9) - __min (3, (m_bitRateMode - 1) >> 1)) + scaleSBR;
+
+    scaleBr = (uint64_t)(scaleBr * bandwidthCompFactor); // Apply compensation
+
   uint32_t* sfbStepSizes = (uint32_t*) m_tempIntBuf;
   uint8_t  meanSpecFlat[USAC_MAX_NUM_CHANNELS];
   unsigned ci = 0, s; // running index
@@ -790,59 +849,187 @@ unsigned ExhaleEncoder::psychBitAllocation () // perceptual bit-allocation via s
 
     // ADD THIS SECTION: Apply tonality-based adjustment to initial step sizes
     // This happens AFTER initial psychoacoustic calculation but BEFORE rate control
-
     for (unsigned ch = 0; ch < nChannels; ch++)
     {
       if (ch == lfeChannelIndex) continue; // Skip LFE channel
       
-      const SfbGroupData& grpData = m_scaleFacData[ch][0]; // Access first group for offsets
+      const SfbGroupData& grpData = m_scaleFacData[ch][0];
       const bool eightShorts = (grpData.numWindowGroups > 1);
       const unsigned numSfb = (eightShorts ? m_numSwbShort : m_numSwbLong);
       
-      // Calculate tonality for each SFB of this channel
-      for (unsigned sfb = 0; sfb < numSfb; sfb++)
+      // Different strategies for different bitrate modes
+      if (m_bitRateMode == 0) // Preset 'a': Special handling for 36 kbit/s
       {
-        // Get SFB width from the grouping data
-        const uint16_t sfbStart = grpData.sfbOffsets[sfb];
-        const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
-        const uint16_t sfbWidth = sfbEnd - sfbStart;
-        
-        if (sfbWidth == 0) continue;
-        
-        // Estimate tonality of this band
-        float tonality = m_bitAllocator.estimateTonality(
-          m_mdctSignals[ch],
-          grpData.sfbOffsets,
-          sfb,
-          sfbWidth
-        );
+        // At very low bitrates, focus on perceptually critical bands
+        for (unsigned sfb = 0; sfb < numSfb; sfb++)
+        {
+          const uint16_t sfbStart = grpData.sfbOffsets[sfb];
+          const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
+          const uint16_t sfbWidth = sfbEnd - sfbStart;
+          
+          if (sfbWidth == 0) continue;
+          
+          // Calculate approximate center frequency of this SFB
+          const float freqHz = (float)(sfbStart + sfbWidth/2) * samplingRate / (2.0f * nSamplesInFrame);
+          
+          // Estimate tonality
+          float tonality = m_bitAllocator.estimateTonality(
+            m_mdctSignals[ch],
+            grpData.sfbOffsets,
+            sfb,
+            sfbWidth
+          );
+
         
         // Adjust step size based on tonality
         // Index into the linear step size array
-        const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+            const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+            float adjustmentFactor = 1.0f;
         
-        // Tonality-based adjustment factor
-        float adjustmentFactor = 1.0f;
-        
-        if (tonality > 0.7f) {
-          // Highly tonal - allocate more bits (reduce step size)
-          // Reduction factor: 0.7 to 1.0 based on tonality
-          adjustmentFactor = 0.7f + 0.3f * (1.0f - tonality);
+            // Perceptual weighting based on frequency
+            float perceptualWeight = 0.0f;
+
+            if (freqHz >= 800.0f && freqHz <= 3500.0f) {
+              // Critical range for speech/vocals
+              perceptualWeight = 1.0f;
+            } else if (freqHz >= 200.0f && freqHz <= 800.0f) {
+              // Important for warmth and body
+              perceptualWeight = 0.6f;
+            } else if (freqHz >= 3500.0f && freqHz <= 6000.0f) {
+              // Important for clarity
+              perceptualWeight = 0.4f;
+            } else {
+              // Less critical frequencies
+              perceptualWeight = 0.2f;
+            }
+
+            
+            // Only protect highly tonal content in perceptually important bands
+            if (tonality > 0.85f && perceptualWeight > 0.5f) {
+              // Very tonal AND perceptually important: allocate 1.5% more bits
+              adjustmentFactor = 0.985f;
+            }
+            else if (tonality < 0.15f || perceptualWeight < 0.3f) {
+              // Noise-like OR perceptually less important: save 1.5% bits
+              adjustmentFactor = 1.015f;
+            }
+            
+            // Apply the adjustment
+            sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
+          }
         }
-        else if (tonality < 0.3f) {
-          // Noise-like - allocate fewer bits (increase step size)
-          // Increase factor: 1.0 to 1.3 based on how noise-like
-          adjustmentFactor = 1.0f + 0.3f * (1.0f - tonality * 3.33f);
+
+      else if (m_bitRateMode <= 2) // Presets 'b' and 'c': Conservative
+      {
+        // Slightly more aggressive than preset 'a' but still conservative
+        const float maxAdjustment = 0.03f + 0.02f * m_bitRateMode; // 5% to 7%
+        
+        for (unsigned sfb = 0; sfb < numSfb; sfb++)
+        {
+          const uint16_t sfbStart = grpData.sfbOffsets[sfb];
+          const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
+          const uint16_t sfbWidth = sfbEnd - sfbStart;
+          
+          if (sfbWidth == 0) continue;
+          
+          float tonality = m_bitAllocator.estimateTonality(
+            m_mdctSignals[ch],
+            grpData.sfbOffsets,
+            sfb,
+            sfbWidth
+          );
+          
+          const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+          float adjustmentFactor = 1.0f;
+          
+          if (tonality > 0.8f) {
+            // Very tonal: allocate more bits
+            adjustmentFactor = 1.0f - maxAdjustment * (tonality - 0.8f) / 0.2f;
+          }
+          else if (tonality < 0.2f) {
+            // Very noise-like: allocate fewer bits
+            adjustmentFactor = 1.0f + maxAdjustment * (0.2f - tonality) / 0.2f;
+          }
+          
+          sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
         }
-        // Else: neutral tonality (0.3-0.7), no adjustment
+      }
+      else // Higher bitrate modes (d-9): Use original aggressive approach
+      {
+        // Progressive adjustment based on bitrate - can be more aggressive
+        const float maxAdjustmentReduction = __min(0.3f, 0.05f + 0.025f * m_bitRateMode); // up to 30%
+        const float maxAdjustmentIncrease = __min(0.3f, 0.05f + 0.025f * m_bitRateMode);  // up to 30%
         
-        // Apply the adjustment
-        sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
-        
-        // Ensure step size stays within reasonable bounds
-        sfbStepSizes[stepIdx] = __max(128u, __min(65536u, sfbStepSizes[stepIdx]));
+        for (unsigned sfb = 0; sfb < numSfb; sfb++)
+        {
+          const uint16_t sfbStart = grpData.sfbOffsets[sfb];
+          const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
+          const uint16_t sfbWidth = sfbEnd - sfbStart;
+          
+          if (sfbWidth == 0) continue;
+          
+          float tonality = m_bitAllocator.estimateTonality(
+            m_mdctSignals[ch],
+            grpData.sfbOffsets,
+            sfb,
+            sfbWidth
+          );
+          
+          const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+          float adjustmentFactor = 1.0f;
+          
+          if (tonality > 0.7f) {
+            // Tonal content: allocate more bits (reduce step size)
+            adjustmentFactor = 1.0f - maxAdjustmentReduction * (tonality - 0.7f) / 0.3f;
+          }
+          else if (tonality < 0.3f) {
+            // Noise-like: allocate fewer bits (increase step size)
+            adjustmentFactor = 1.0f + maxAdjustmentIncrease * (0.3f - tonality) / 0.3f;
+          }
+          
+          sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
+          
+          // Ensure step size stays within reasonable bounds
+          sfbStepSizes[stepIdx] = __max(128u, __min(65536u, sfbStepSizes[stepIdx]));
+        }
       }
     }
+    
+    // Add safety check for preset 'a' to prevent bitrate overshoot
+    if (m_bitRateMode == 0)
+    {
+      // Calculate average step size to ensure we're not allocating too many bits
+      uint64_t totalStepSize = 0;
+      unsigned stepCount = 0;
+      
+      for (unsigned ch = 0; ch < nChannels; ch++) {
+        if (ch == lfeChannelIndex) continue;
+        const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
+        for (unsigned sfb = 0; sfb < numSfb; sfb++) {
+          totalStepSize += sfbStepSizes[ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb];
+          stepCount++;
+        }
+      }
+      
+      // If average step size is too low (too many bits), scale everything back
+      if (stepCount > 0) {
+        const uint64_t avgStepSize = totalStepSize / stepCount;
+        const uint64_t minAvgStepSize = 2048; // Empirical threshold for preset 'a'
+        
+        if (avgStepSize < minAvgStepSize) {
+          const float globalScale = (float)minAvgStepSize / avgStepSize;
+          for (unsigned ch = 0; ch < nChannels; ch++) {
+            if (ch == lfeChannelIndex) continue;
+            const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
+            for (unsigned sfb = 0; sfb < numSfb; sfb++) {
+              const unsigned idx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+              sfbStepSizes[idx] = (uint32_t)(sfbStepSizes[idx] * globalScale);
+            }
+          }
+        }
+      }
+    }
+    // END OF TONALITY SECTION
 
   // get means of spectral and temporal flatness for every channel
   m_bitAllocator.getChAverageSpecFlat (meanSpecFlat, nChannels);
@@ -1657,7 +1844,30 @@ unsigned ExhaleEncoder::spectralProcessing ()  // complete ics_info(), calc TNS 
           findActualBandwidthShort (&icsCurr.maxSfb, grpSO, m_mdctSignals[ci], nChannels < 2 ? nullptr : m_mdstSignals[ci], nSamplesInShort);
 #endif
           errorValue |= eightShortGrouping (grpData, grpSO, m_mdctSignals[ci], nChannels < 2 ? nullptr : m_mdstSignals[ci]);
-        } // if EIGHT_SHORT
+        }
+          //close           // ... (existing logic to set maxSfb for short windows)
+          // if EIGHT_SHORT
+
+          // new bandwidth limits Apply the pre-calculated bandwidth limit to max_sfb
+          if (m_targetBandwidth > 0 && m_targetBandwidth < (samplingRate / 2))
+          {
+              const uint16_t* sfbOffsets = (icsCurr.windowSequence != EIGHT_SHORT) ? swbOffsetsL[m_swbTableIdx] : swbOffsetsS[m_swbTableIdx];
+              const unsigned nSamplesInBlock = (icsCurr.windowSequence != EIGHT_SHORT) ? nSamplesInFrame : nSamplesInShort;
+              
+              uint8_t bwLimitedSfb = 0;
+              // Find the highest SFB index that is still within our target bandwidth
+              while (bwLimitedSfb < icsCurr.maxSfb)
+              {
+                  // Calculate the approximate upper frequency of the current band
+                  float bandFreq = (float)(sfbOffsets[bwLimitedSfb + 1]) * samplingRate / (2.0f * nSamplesInBlock);
+                  if (bandFreq > m_targetBandwidth)
+                  {
+                      break; // This band is beyond our target, so we stop at the previous one.
+                  }
+                  bwLimitedSfb++;
+              }
+              icsCurr.maxSfb = __min(icsCurr.maxSfb, bwLimitedSfb);
+          }
 
         // compute and quantize optimal TNS coefficients, then find optimal TNS filter order
         s = getOptParCorCoeffs (grpData, icsCurr.maxSfb, tnsData, ci, (ch > 0 && coreConfig.commonWindow ? coreConfig.tnsData[0].firstTnsWindow : 0));
@@ -2051,6 +2261,9 @@ ExhaleEncoder::ExhaleEncoder (int32_t* const inputPcmData,           unsigned ch
   m_outAuData    = outputAuData;
   m_pcm24Data    = inputPcmData;
   m_tempIntBuf   = nullptr;
+    
+    m_targetBandwidth = 0; // ADD THIS LINE to initialize the new variable
+
 
   // initialize all helper structs
   for (unsigned el = 0; el < USAC_MAX_NUM_ELEMENTS; el++)
@@ -2261,6 +2474,9 @@ unsigned ExhaleEncoder::initEncoder (unsigned char* const audioConfigBuffer, uin
 #else
   m_swbTableIdx = (m_frameLength == CCFL_768 ? freqIdxToSwbTableIdx768[ch] : freqIdxToSwbTableIdxAAC[ch]);
 #endif
+
+    // ADD THIS BLOCK: Calculate the target bandwidth based on the final configuration
+    m_targetBandwidth = getBandwidthForBitrateMode(m_bitRateMode, toSamplingRate(m_frequencyIdx), m_shiftValSBR > 0);
 
   if (m_elementData[0] != nullptr) // initEncoder was called before, don't reallocate memory
   {
