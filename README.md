@@ -1,9 +1,11 @@
 exhale edit
 ======
 
-This fork of exhale has custom experimental features do not use for archiving!.
+This fork of exhale has custom experimental features targeted for low bitrates do not use for archiving!.
 
-First experimental feature is tonality encoding, dynamic bandwidth controls (by bitrate), and minimum SNR.
+First experimental feature is tonality encoding(helpful at low bitrates), dynamic bandwidth controls (only enabled at lowest 3 presets hard to tell if it helps or is neutral), and minimum SNR(helpful at low bitrates).
+
+
 
 exhale, which is an acronym for "Ecodis eXtended High-efficiency And
 Low-complexity Encoder", is a lightweight library and application to
