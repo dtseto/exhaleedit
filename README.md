@@ -3,7 +3,7 @@ exhale edit
 
 This fork of exhale has custom experimental features targeted for low bitrates do not use for archiving!.
 
-First experimental feature is tonality encoding(helpful at low bitrates), dynamic bandwidth controls (only enabled at lowest 3 presets hard to tell if it helps or is neutral), and minimum SNR(helpful at low bitrates).
+First experimental feature is tonality encoding (helpful at low bitrates), dynamic bandwidth controls (disabled does not appear to help at low bitrates), and minimum SNR (extra tuning for lower bitrates 0, 1 and a, b).
 
 
 
