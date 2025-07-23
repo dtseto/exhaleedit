@@ -37,8 +37,9 @@ private:
     // ADD: New member variable for Minimum SNR model
     double   m_sfbMinSnr[USAC_MAX_NUM_CHANNELS][MAX_NUM_SWB_LONG];
 
-    // ADD: New private method for Minimum SNR calculation
-    void initMinSnr (const unsigned nChannels, const unsigned samplingRate, const long bitrate, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS]);
+    // ADD: New private method for Minimum SNR calculation with bitratemode
+    void initMinSnr(const unsigned nChannels, const unsigned samplingRate, const long bitrate, const uint8_t bitRateMode, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS]);
+    //void initMinSnr (const unsigned nChannels, const unsigned samplingRate, const long bitrate, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS]);
 
 public:
     
@@ -60,7 +61,7 @@ public:
                                const uint32_t specAnaStats[USAC_MAX_NUM_CHANNELS],
                                const uint32_t tempAnaStats[USAC_MAX_NUM_CHANNELS],
                                const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,
-                               const unsigned lfeChannelIndex, const unsigned ad = 0u, const bool tnsDisabled = false, const long bitrate = 64000);
+                               const unsigned lfeChannelIndex, const unsigned ad = 0u, const bool tnsDisabled = false, const long bitrate = 64000, const uint8_t bitRateMode = 0);
     unsigned imprSfbStepSizes (const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS], const uint8_t numSwbShort,
                                const int32_t* const mdctSpec[USAC_MAX_NUM_CHANNELS], const unsigned nSamplesInFrame,
                                const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,

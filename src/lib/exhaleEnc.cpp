@@ -723,7 +723,7 @@ unsigned ExhaleEncoder::psychBitAllocation () // perceptual bit-allocation via s
 
   // psychoacoustic processing of SFB RMS values yielding masking thresholds in m_tempIntBuf
   errorValue |= m_bitAllocator.initSfbStepSizes (m_scaleFacData, m_numSwbShort, m_specAnaCurr, m_tempAnaCurr,
-                                                 nChannels, samplingRate, sfbStepSizes, lfeChannelIndex, 5 - 5 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2));
+                                                 nChannels, samplingRate, sfbStepSizes, lfeChannelIndex, 5 - 5 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2), m_bitRateMode);
 
     // ADD THIS SECTION: Apply tonality-based adjustment to initial step sizes
     // This happens AFTER initial psychoacoustic calculation but BEFORE rate control

@@ -95,9 +95,7 @@ BitAllocator::BitAllocator ()
  * initMinSnr: Calculates the minimum signal-to-noise ratio for each SFB.
  * This is a floating-point adaptation of FDKaacEnc_initMinSnr.
  */
-void BitAllocator::initMinSnr(const unsigned nChannels, const unsigned samplingRate, const long bitrate,
-                              const uint8_t bitRateMode, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS])
-//note bitrademode added
+void BitAllocator::initMinSnr(const unsigned nChannels, const unsigned samplingRate, const long bitrate, const uint8_t bitRateMode, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS])
 //void BitAllocator::initMinSnr(const unsigned nChannels, const unsigned samplingRate, const long bitrate, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS])
 {
     for (unsigned ch = 0; ch < nChannels; ch++)
@@ -115,9 +113,18 @@ void BitAllocator::initMinSnr(const unsigned nChannels, const unsigned samplingR
         const double MAX_BARC = 24.0;
         const double MAX_BARCP1 = 25.0;
         const double BITS2PEFAC = 1.44269504089; // log2(e)
-        const double PERS2P4 = 0.024;
-        const double MAX_SNR = 0.8;
+        double PERS2P4 = 0.024;
+        double MAX_SNR = 0.8;
         const double MIN_SNR = 0.003;
+
+        //Aggressive tuning triggered by bitRateMode
+        //The comment for EE_MORE_MSE suggests modes 1-9 exist. Let's assume mode 5 or less is "low".
+        if (bitRateMode <= 1)
+        {
+            PERS2P4 = 0.015;  // More aggressive energy scaling
+            MAX_SNR = 1.2;    // Allow higher min SNR (up to +0.8 dB)
+            //snr_offset = 2.0; // Increase the offset for a boost
+        }
 
         double barcFactor = std::min(barcLineValue(sfbOffset[sfbActive], samplingRate), MAX_BARC) / MAX_BARCP1;
         
@@ -268,10 +275,10 @@ unsigned BitAllocator::initSfbStepSizes (const SfbGroupData* const groupData[USA
                                          const uint32_t specAnaStats[USAC_MAX_NUM_CHANNELS],
                                          const uint32_t tempAnaStats[USAC_MAX_NUM_CHANNELS],
                                          const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,
-                                         const unsigned lfeChannelIndex, const unsigned ad /*= 0u*/, const bool tnsDisabled /*= false*/, const long bitrate /*= 64000*/)
+                                         const unsigned lfeChannelIndex, const unsigned ad /*= 0u*/, const bool tnsDisabled /*= false*/, const long bitrate /*= 64000*/, const uint8_t bitRateMode /*= 0*/)
 {
       // ADD: Initialize the Minimum SNR model
-      initMinSnr(nChannels, samplingRate, bitrate, groupData);
+      initMinSnr(nChannels, samplingRate, bitrate, bitRateMode, groupData);
 
       // equal-loudness weighting based on data from: K. Kurakata, T. Mizunami, and K. Matsushita, "Percentiles
       // of Normal Hearing-Threshold Distribution Under Free-Field Listening Conditions in Numerical Form," Ac.
