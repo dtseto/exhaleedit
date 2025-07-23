@@ -95,7 +95,10 @@ BitAllocator::BitAllocator ()
  * initMinSnr: Calculates the minimum signal-to-noise ratio for each SFB.
  * This is a floating-point adaptation of FDKaacEnc_initMinSnr.
  */
-void BitAllocator::initMinSnr(const unsigned nChannels, const unsigned samplingRate, const long bitrate, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS])
+void BitAllocator::initMinSnr(const unsigned nChannels, const unsigned samplingRate, const long bitrate,
+                              const uint8_t bitRateMode, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS])
+//note bitrademode added
+//void BitAllocator::initMinSnr(const unsigned nChannels, const unsigned samplingRate, const long bitrate, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS])
 {
     for (unsigned ch = 0; ch < nChannels; ch++)
     {

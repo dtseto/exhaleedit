@@ -1,0 +1,22 @@
+src/lib/Archive 2.zip
+src/lib/Archive.zip
+bin/exhale
+*.o
+*.p
+*.o
+*.p
+/bin
+/build
+src/.DS_Store
+src/lib/.DS_Store
+src/.DS_Store
+src/lib/exhaleEnc.cpp.zip
+/build
+src/.DS_Store
+/build
+/build
+bitAllocation.cpp
+bitAllocation.cpp
+bin/exhale
+.DS_Store
+src/.DS_Store
