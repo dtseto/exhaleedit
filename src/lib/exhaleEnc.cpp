@@ -1290,7 +1290,35 @@ unsigned ExhaleEncoder::quantizationCoding ()  // apply MDCT quantization and en
     m_bitAllocator.getChAverageTempFlat (meanTempFlat, nChannels);
   }
 
-  for (unsigned el = 0; el < m_numElements; el++)  // element loop
+    // --- NEW CODE: Inject transient influence on meanTempFlat ---
+    // You need to know if a transient was detected.
+    // The 'transientDetectedInFrame' flag was in spectralProcessing().
+    // You have a few options to bring that info here:
+    // 1. Make 'transientDetectedInFrame' a member variable of ExhaleEncoder (e.g., m_transientDetectedInFrame).
+    //    It would be set in spectralProcessing() and read here. This is generally clean.
+    // 2. Re-evaluate m_tranLocCurr here. Less efficient but avoids new member.
+    //    However, m_tempAnaCurr and m_tempAnaNext are available, which are direct outputs of TempAnalyzer.
+    //    m_tranLocCurr is populated by getTransientAndPitch, which influences m_tempAnaCurr (e.g., 'R' part).
+
+    // Let's assume you've made 'm_transientDetectedInFrame' a member variable.
+    // If not, you could re-evaluate m_tranLocCurr here, but setting a member in spectralProcessing is better.
+
+    // --- NEW CODE: Inject transient influence on meanTempFlat ---
+    // Now using the member variable m_transientDetectedInFrame
+    if (m_transientDetectedInFrame) { // <--- Accessing the member variable directly
+        const uint8_t FORCE_TRANSIENT_TEMP_FLAT = 0; // A very low value to signal transient. Needs tuning.
+        for (unsigned ch_idx_modify = 0; ch_idx_modify < nChannels; ch_idx_modify++) {
+            // Apply modification to meanTempFlat for all channels if a transient was detected anywhere in the frame
+            meanTempFlat[ch_idx_modify] = FORCE_TRANSIENT_TEMP_FLAT;
+            // Or, for per-channel modification (if m_tranLocCurr is directly accessible and needed here):
+            // if (m_tranLocCurr[ch_idx_modify] != -1) {
+            //     meanTempFlat[ch_idx_modify] = FORCE_TRANSIENT_TEMP_FLAT;
+            // }
+        }
+    }
+    // --- END NEW CODE ---
+
+    for (unsigned el = 0; el < m_numElements; el++)  // element loop
   {
     CoreCoderData& coreConfig = *m_elementData[el];
     const unsigned nrChannels = (coreConfig.elementType & 1) + 1; // for UsacCoreCoderData()
@@ -1553,9 +1581,24 @@ unsigned ExhaleEncoder::quantizationCoding ()  // apply MDCT quantization and en
           m_coreSignals[ci][0] |= m_coreSignals[s][0] & 0x10000F; // bits 21
           m_coreSignals[s][0] |= m_coreSignals[ci][0] & 0x10000F; // and 4-1
         }
-        m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (&m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame], msfVal,
-                                                        __max (m_meanTempPrev[ci], meanTempFlat[ci]) >> 3, m_bitRateMode == 0,
-                                                        m_indepFlag, msfSte, tmpValSynch, nSamplesInFrame, &m_coreSignals[ci][1]);
+          
+//m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (&m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame], msfVal,
+// __max (m_meanTempPrev[ci], meanTempFlat[ci]) >> 3, m_bitRateMode == 0,
+//m_indepFlag, msfSte, tmpValSynch, nSamplesInFrame, &m_coreSignals[ci][1]);
+          
+          
+m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (
+  &m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame], // sbrLevels
+  msfVal,                                                    // specFlat5b
+  __max (m_meanTempPrev[ci], meanTempFlat[ci]) >> 3,          // tempFlat5b (this will use your adjusted meanTempFlat)
+  m_bitRateMode == 0,                                        // lr (boolean)
+  m_indepFlag,                                               // ind (boolean)
+  msfSte,                                                    // specFlatSte
+  tmpValSynch,                                               // tmpValSte
+  nSamplesInFrame,                                           // frameSize
+  &m_coreSignals[ci][1]                                      // sbrData
+                                  );
+
         if (ch + 1 == nrChannels) // update the flatness histories
         {
           m_meanSpecPrev[ci] = meanSpecFlat[ci];  m_meanSpecPrev[s] = meanSpecFlat[s];
@@ -1586,6 +1629,19 @@ unsigned ExhaleEncoder::spectralProcessing ()  // complete ics_info(), calc TNS 
   const bool     useMaxBandwidth = (samplingRate < 37566 || m_shiftValSBR > 0);
   unsigned ci = 0, s; // running index
   unsigned errorValue = 0; // no error
+
+    // New code for Transient aware processing
+    // Get transient info from temporal processing
+    // m_tranLocCurr is already populated by temporalProcessing() which runs before spectralProcessing()
+  //  bool transientDetectedInFrame = false;
+    // Iterate through channels or just check a primary channel (e.g., channel 0)
+   // for (unsigned ch_idx = 0; ch_idx < nChannels; ch_idx++) {
+    //    if (m_tranLocCurr[ch_idx] != -1) { // -1 means no transient detected
+     //       transientDetectedInFrame = true;
+     //       break; // Found a transient, no need to check other channels
+      //  }
+   // }
+// end new code
 
   // get spectral channel statistics for last frame, used for input bandwidth (BW) detection
   m_specAnalyzer.getSpectralBandwidth (m_bandwidPrev, nChannels);
@@ -1908,6 +1964,16 @@ unsigned ExhaleEncoder::temporalProcessing () // determine time-domain aspects o
   // get temporal channel statistics for this frame, used for spectral grouping/quantization
   m_tempAnalyzer.getTempAnalysisStats (m_tempAnaCurr, nChannels);
   m_tempAnalyzer.getTransientAndPitch (m_tranLocCurr, nChannels);
+
+    // --- NEW CODE: Calculate and set the member transient flag ---
+    m_transientDetectedInFrame = false; // Reset for the current frame
+    for (unsigned ch_idx = 0; ch_idx < nChannels; ch_idx++) {
+        if (m_tranLocCurr[ch_idx] != -1) { // -1 means no transient detected for this channel
+            m_transientDetectedInFrame = true;
+            break; // Found a transient, no need to check other channels for this flag
+        }
+    }
+    // --- END NEW CODE ---
 
   // temporal analysis for look-ahead signal (central nSamplesInFrame samples of next frame)
   errorValue |= m_tempAnalyzer.temporalAnalysis (m_timeSignals, nChannels, nSamplesInFrame, nSamplesTempAna,

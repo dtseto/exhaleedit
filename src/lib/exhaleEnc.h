@@ -246,6 +246,8 @@ private:
   LappedTransform m_transform; // time-frequency transform
 
     unsigned        m_targetBandwidth; // ADD THIS LINE
+    
+    bool            m_transientDetectedInFrame; // Add this line
 
   // helper functions
   unsigned applyTnsToWinGroup (SfbGroupData& grpData, const uint8_t grpIndex, const uint8_t maxSfb, TnsData& tnsData,

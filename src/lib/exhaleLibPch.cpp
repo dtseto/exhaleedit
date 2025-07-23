@@ -119,6 +119,8 @@ static int32_t packSbr3BandQuantLevels (const uint64_t enBlock, const uint32_t d
 int32_t getSbrEnvelopeAndNoise (int32_t* const sbrLevels, const uint8_t specFlat5b, const uint8_t tempFlat5b, const bool lr, const bool ind,
                                 const uint8_t specFlatSte, const int32_t tmpValSte, const uint32_t frameSize, int32_t* sbrData)
 {
+    
+    
   const uint64_t enValue[8] = {square (sbrLevels[21]), square (sbrLevels[22]), square (sbrLevels[23]), square (sbrLevels[24]),
                                square (sbrLevels[25]), square (sbrLevels[26]), square (sbrLevels[27]), square (sbrLevels[10])};
   const uint64_t envTmp0[1] = { enValue[0] + enValue[1] + enValue[2] + enValue[3] +
@@ -162,6 +164,32 @@ int32_t getSbrEnvelopeAndNoise (int32_t* const sbrLevels, const uint8_t specFlat
 
   if (tmpBest < tmpValSte) tmpBest = tmpValSte;
 
+    // --- NEW CODE FOR TRANSIENT AWARENESS ---
+    // You'd ideally get a signal here indicating a transient (e.g., from tempFlat5b or a new flag)
+    // For example, if tempFlat5b is very low, it indicates a strong transient.
+    // You'll need to define a threshold for tempFlat5b or pass a direct boolean flag.
+    const uint8_t TRANSIENT_THRESHOLD_TEMP_FLAT = 10; // Example threshold, needs tuning
+
+    if (tempFlat5b <= TRANSIENT_THRESHOLD_TEMP_FLAT) {
+        // A transient is detected, force more envelopes
+        // Aim for 4 or 8 envelopes for high transient resolution
+        if (tmpBest < 2) { // Force to at least 4 envelopes
+            tmpBest = 2;
+        }
+        // If you want to always force to 8 envelopes on a transient, you can do:
+        // tmpBest = 3;
+
+        // If you have the exact transient location (e.g., as an SBR time slot index)
+        // you would also need to modify how the 'packSbr3BandQuantLevels' is called
+        // or how the 'sbrData' array is populated to ensure the borders are around the transient.
+        // This part is more complex as it requires knowing the internal structure
+        // of packSbr3BandQuantLevels and how 'sbrData' translates to actual SBR borders.
+        // The current code derives borders implicitly from tmpBest (0, 1, 2, 3 -> 1, 2, 4, 8 envelopes).
+        // For custom borders, you'd need to modify the loops that populate sbrData[t].
+    }
+    // --- END NEW CODE ---
+
+    
   /*Q*/if (tmpBest == 0)  // quantized envelopes for optimal tmp value
   {
     sbrData[0] = packSbr3BandQuantLevels (envTmp0[0], frameSize, noiseLevel, envTmp0[0], rat3BandsL, rat3BandsM, rat3BandsH);
