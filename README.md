@@ -5,7 +5,7 @@ This fork of exhale has custom experimental features targeted for low bitrates d
 
 Builds available for MAC OS arm. Code should also work on pc and linux.
 
-First experimental feature is tonality encoding (helpful at low bitrates), dynamic bandwidth controls (disabled does not appear to help at low bitrates), and minimum SNR (extra tuning for lower bitrates 0, 1 and a, b).
+First experimental feature is tonality encoding (helpful at low bitrates), dynamic bandwidth controls (disabled does not appear to help at low bitrates), minimum SNR (extra tuning for lower bitrates 0, 1 and a, b), and transient guided SBR.
 
 
 
