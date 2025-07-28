@@ -245,6 +245,15 @@ private:
   int16_t         m_tranLocNext[USAC_MAX_NUM_CHANNELS];
   LappedTransform m_transform; // time-frequency transform
 
+	
+	// --- ADD THESE LINES FOR SBR PRE-ECHO CONTROL ---
+	bool     m_sbrPeControlActive;
+	// Store previous envelope levels. MAX_NUM_SWB_LONG is a good upper bound for bands.
+	uint32_t m_prevSbrEnvelope[USAC_MAX_NUM_CHANNELS][MAX_NUM_SWB_LONG];
+	// --- END OF ADDED LINES ---
+
+
+	
     unsigned        m_targetBandwidth; // ADD THIS LINE
     // transient detector
     bool            m_transientDetectedInFrame; // Add this line

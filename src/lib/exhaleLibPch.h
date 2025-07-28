@@ -196,6 +196,14 @@ static const ELEM_TYPE elementTypeConfig[USAC_MAX_NUM_ELCONFIGS][USAC_MAX_NUM_EL
 // fast calculation of x / den: (x * oneTwentyEightOver[den]) >> 7, accurate for 0 <= x <= 162
 const uint8_t oneTwentyEightOver[14] = {0, 128, 64, 43, 32, 26, 22, 19, 16, 15, 13, 12, 11, 10};
 
+// ADD THIS NEW TABLE: Pre-calculated values for a ~50% lower bitrate.
+// This table maps each preset to the psychoacoustic profile of a lower-quality
+// preset to achieve the bitrate reduction in a non-linear, tuned way.
+const uint8_t eightTimesSqrt_50percent_LowerBR[10] = {
+	// Preset:    0,  1,  2,  3,  4,  5,  6,  7,  8,  9
+	8, 10, 11, 13, 14, 15, 16, 17, 18, 19
+};
+
 // public SBR related functions
 int32_t getSbrEnvelopeAndNoise (int32_t* const sbrLevels, const uint8_t specFlat5b, const uint8_t tempFlat5b, const bool lr, const bool ind,
                                 const uint8_t specFlatSte, const int32_t tmpValSte, const uint32_t frameSize, int32_t* sbrData);

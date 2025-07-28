@@ -682,512 +682,547 @@ uint32_t ExhaleEncoder::getThr (const unsigned channelIndex, const unsigned sfbI
 
 unsigned ExhaleEncoder::psychBitAllocation () // perceptual bit-allocation via scale factors
 {
-  const unsigned nChannels       = toNumChannels (m_channelConf);
-  const unsigned nSamplesInFrame = toFrameLength (m_frameLength);
-  const unsigned samplingRate    = toSamplingRate (m_frequencyIdx);
-  const unsigned lfeChannelIndex = (m_channelConf >= CCI_6_CH ? __max (5, nChannels - 1) : USAC_MAX_NUM_CHANNELS);
-  const bool     useMaxBandwidth = (samplingRate < 37566 || m_shiftValSBR > 0);
-  const uint8_t  maxSfbLong      = (useMaxBandwidth ? m_numSwbLong : brModeAndFsToMaxSfbLong (m_bitRateMode, samplingRate));
-  
-    // ==========================================================================================
-    // CHANGE 2: Add the simple bitrate compensation factor.
-    // ==========================================================================================
-	const double bandwidthCompFactor = 1.0; // Disabled
-	//disable dynamic bandwidth below
-    //double bandwidthCompFactor = 1.0;
-    //if (m_targetBandwidth > 0 && m_numSwbLong > maxSfbLong)
-    //{
-        // Calculate how much of the spectrum was cut off and create a factor to compensate.
-        // We use sqrt to make the compensation less aggressive than a linear 1:1 ratio.
-        //bandwidthCompFactor = sqrt((double)m_numSwbLong / __max(1, maxSfbLong));
-    //}
-
-   // const uint16_t scaleSBR        = (m_shiftValSBR > 0 || m_nonMpegExt ? sbrRateOffset[m_bitRateMode] : 0); // -25% rate
-   // const uint64_t scaleSr         = (samplingRate < 27713 ? (samplingRate < 23004 ? 32 : 34) - __min (3 << m_shiftValSBR, m_bitRateMode)
-  //                                   : (m_bitRateMode != 3 && samplingRate < 37566 ? 36 : 37) - 4 + 4 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2)) - (nChannels >> 1);
-// end brcf
-    
-    const uint16_t scaleSBR        = (m_shiftValSBR > 0 || m_nonMpegExt ? sbrRateOffset[m_bitRateMode] : 0); // -25% rate
-    const uint64_t scaleSr           = (samplingRate < 27713 ? (samplingRate < 23004 ? 32 : 34) - __min (3 << m_shiftValSBR, m_bitRateMode)
-                                        : (m_bitRateMode != 3 && samplingRate < 37566 ? 36 : 37) - 4 + 4 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2)) - (nChannels >> 1);
-    // ==========================================================================================
-    // CHANGE 3: Apply the compensation factor to the main bit allocation variable.
-    // ==========================================================================================
-    uint64_t scaleBr           = (m_bitRateMode == 0 || m_frameCount <= 1 ? __min (32, 17u + (((samplingRate + (1 << 11)) >> 12) << 1) - (nChannels >> 1))
-                                        : scaleSr - (eightTimesSqrt256Minus[256 - m_bitRateMode] *.9) - __min (3, (m_bitRateMode - 1) >> 1)) + scaleSBR;
-
-    scaleBr = (uint64_t)(scaleBr * bandwidthCompFactor); // Apply compensation
-
-  uint32_t* sfbStepSizes = (uint32_t*) m_tempIntBuf;
-  uint8_t  meanSpecFlat[USAC_MAX_NUM_CHANNELS];
-  unsigned ci = 0, s; // running index
-  unsigned errorValue = 0; // no error
-
-  // psychoacoustic processing of SFB RMS values yielding masking thresholds in m_tempIntBuf
-  errorValue |= m_bitAllocator.initSfbStepSizes (m_scaleFacData, m_numSwbShort, m_specAnaCurr, m_tempAnaCurr,
-                                                 nChannels, samplingRate, sfbStepSizes, lfeChannelIndex, 5 - 5 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2), m_bitRateMode);
-
-	// ==========================================================================================
-	// FIXED: Research-based tonality adjustment (8-15%) + Better safety check
-	// ==========================================================================================
-    // ADD THIS SECTION: Apply tonality-based adjustment to initial step sizes
-    // This happens AFTER initial psychoacoustic calculation but BEFORE rate control
-	/*
-	for (unsigned ch = 0; ch < nChannels; ch++)
-	{
-		if (ch == lfeChannelIndex) continue; // Skip LFE channel
-		
-		const SfbGroupData& grpData = m_scaleFacData[ch][0];
-		const bool eightShorts = (grpData.numWindowGroups > 1);
-		const unsigned numSfb = (eightShorts ? m_numSwbShort : m_numSwbLong);
-		
-		// VERY conservative scaling: Start small and proven to work
-		// Mode 0: 3%, Mode 9: 6% - much smaller than research optimal but guaranteed safe
-		const float maxAdjustment = 0.03f + 0.003f * __min(9, m_bitRateMode); // 3% to 6%
-		
-		for (unsigned sfb = 0; sfb < numSfb; sfb++)
-		{
-			const uint16_t sfbStart = grpData.sfbOffsets[sfb];
-			const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
-			const uint16_t sfbWidth = sfbEnd - sfbStart;
-			
-			if (sfbWidth == 0) continue;
-			
-			// Estimate tonality
-			float tonality = m_bitAllocator.estimateTonality(
-															 m_mdctSignals[ch],
-															 grpData.sfbOffsets,
-															 sfb,
-															 sfbWidth
-															 );
-			
-			const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
-			
-	 */
+	const unsigned nChannels       = toNumChannels (m_channelConf);
+	const unsigned nSamplesInFrame = toFrameLength (m_frameLength);
+	const unsigned samplingRate    = toSamplingRate (m_frequencyIdx);
+	const unsigned lfeChannelIndex = (m_channelConf >= CCI_6_CH ? __max (5, nChannels - 1) : USAC_MAX_NUM_CHANNELS);
+	const bool     useMaxBandwidth = (samplingRate < 37566 || m_shiftValSBR > 0);
+	const uint8_t  maxSfbLong      = (useMaxBandwidth ? m_numSwbLong : brModeAndFsToMaxSfbLong (m_bitRateMode, samplingRate));
 	
-			// Use continuous tonality values - no arbitrary thresholds!
-			// tonality = 1.0 (pure tone) → +maxAdjustment% more bits (reduce step size)
-			// tonality = 0.5 (neutral)  → no change
-			// tonality = 0.0 (pure noise) → +maxAdjustment% fewer bits (increase step size)
+	const bool useModifiedBitrateLogic = true;
+	
+	// ==========================================================================================
+	// CHANGE 2: Add the simple bitrate compensation factor.
+	// ==========================================================================================
+	//disabled bandwidth comp
+	//const double bandwidthCompFactor = 1.0; // Disabled
+	//disable dynamic bandwidth below
+	//double bandwidthCompFactor = 1.0;
+	//if (m_targetBandwidth > 0 && m_numSwbLong > maxSfbLong)
+	//{
+	// Calculate how much of the spectrum was cut off and create a factor to compensate.
+	// We use sqrt to make the compensation less aggressive than a linear 1:1 ratio.
+	//bandwidthCompFactor = sqrt((double)m_numSwbLong / __max(1, maxSfbLong));
+	//}
+	
+	// const uint16_t scaleSBR        = (m_shiftValSBR > 0 || m_nonMpegExt ? sbrRateOffset[m_bitRateMode] : 0); // -25% rate
+	// const uint64_t scaleSr         = (samplingRate < 27713 ? (samplingRate < 23004 ? 32 : 34) - __min (3 << m_shiftValSBR, m_bitRateMode)
+	//                                   : (m_bitRateMode != 3 && samplingRate < 37566 ? 36 : 37) - 4 + 4 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2)) - (nChannels >> 1);
+	// end brcf
+	
+	// if sbr enabled save 25% of bits for it
+	const uint16_t scaleSBR        = (m_shiftValSBR > 0 || m_nonMpegExt ? sbrRateOffset[m_bitRateMode] : 0); // -25% rate
+	// for lower sample rates <28khz more agressive quantiz lower bitrate
+	// for higher sample rates opposite higher bitrates
+	// also different bitrate modes higher or lower
+	const uint64_t scaleSr           = (samplingRate < 27713 ? (samplingRate < 23004 ? 32 : 34) - __min (3 << m_shiftValSBR, m_bitRateMode)
+										: (m_bitRateMode != 3 && samplingRate < 37566 ? 36 : 37) - 4 + 4 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2)) - (nChannels >> 1);
+	// ==========================================================================================
+	// CHANGE 3: Apply the compensation factor to the main bit allocation variable.
+	// ==========================================================================================
+	//final bitrate scaler use sample rate scaler, 8*scrt(256) lookup table, sbr, to adjust quantization and bitrate
+	// Declare scaleBr before it is used
+	uint64_t scaleBr;
+	
+	if (useModifiedBitrateLogic == true)
+	{
+		// 1. Calculate scaleBr using the modified lookup table for its psychoacoustic tuning.
+		scaleBr = (m_bitRateMode == 0 || m_frameCount <= 1 ? __min (32, 17u + (((samplingRate + (1 << 11)) >> 12) << 1) - (nChannels >> 1))
+				   : scaleSr - eightTimesSqrt_50percent_LowerBR[m_bitRateMode] - __min (3, (m_bitRateMode - 1) >> 1)) + scaleSBR;
+		
+		// 2. ALSO apply the aggressive multiplier to that result to force a much lower bitrate.
+		// You can tune this value (e.g., 1.5, 1.8, 2.0) to get the desired rate.
+		scaleBr = (uint64_t)(scaleBr * 2.0);
+
+	}
+	else
+	{
+		// ORIGINAL LOGIC
+		scaleBr = (m_bitRateMode == 0 || m_frameCount <= 1 ? __min (32, 17u + (((samplingRate + (1 << 11)) >> 12) << 1) - (nChannels >> 1))
+				   : scaleSr - eightTimesSqrt256Minus[255 - m_bitRateMode] - __min (3, (m_bitRateMode - 1) >> 1)) + scaleSBR;
+
+	}
+		
+		
+		//const uint64_t scaleBr = (uint64_t)(2.0 * ((m_bitRateMode == 0 || m_frameCount <= 1 ? __min (32, 17u + (((samplingRate + (1 << 11)) >> 12) << 1) - (nChannels >> 1))
+		//										: scaleSr - eightTimesSqrt256Minus[256 - m_bitRateMode] - __min (3, (m_bitRateMode - 1) >> 1)) + scaleSBR));
+		
+		
+		//scaleBr = (uint64_t)(scaleBr * bandwidthCompFactor); // Apply compensation presently disabled
+		
+		uint32_t* sfbStepSizes = (uint32_t*) m_tempIntBuf;
+		uint8_t  meanSpecFlat[USAC_MAX_NUM_CHANNELS];
+		unsigned ci = 0, s; // running index
+		unsigned errorValue = 0; // no error
+		
+		// psychoacoustic processing of SFB RMS values yielding masking thresholds in m_tempIntBuf
+		errorValue |= m_bitAllocator.initSfbStepSizes (m_scaleFacData, m_numSwbShort, m_specAnaCurr, m_tempAnaCurr,
+													   nChannels, samplingRate, sfbStepSizes, lfeChannelIndex, 5 - 5 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2), m_bitRateMode);
+		
+		// ==========================================================================================
+		// FIXED: Research-based tonality adjustment (8-15%) + Better safety check
+		// ==========================================================================================
+		// ADD THIS SECTION: Apply tonality-based adjustment to initial step sizes
+		// This happens AFTER initial psychoacoustic calculation but BEFORE rate control
+		/*
+		 for (unsigned ch = 0; ch < nChannels; ch++)
+		 {
+		 if (ch == lfeChannelIndex) continue; // Skip LFE channel
+		 
+		 const SfbGroupData& grpData = m_scaleFacData[ch][0];
+		 const bool eightShorts = (grpData.numWindowGroups > 1);
+		 const unsigned numSfb = (eightShorts ? m_numSwbShort : m_numSwbLong);
+		 
+		 // VERY conservative scaling: Start small and proven to work
+		 // Mode 0: 3%, Mode 9: 6% - much smaller than research optimal but guaranteed safe
+		 const float maxAdjustment = 0.03f + 0.003f * __min(9, m_bitRateMode); // 3% to 6%
+		 
+		 for (unsigned sfb = 0; sfb < numSfb; sfb++)
+		 {
+		 const uint16_t sfbStart = grpData.sfbOffsets[sfb];
+		 const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
+		 const uint16_t sfbWidth = sfbEnd - sfbStart;
+		 
+		 if (sfbWidth == 0) continue;
+		 
+		 // Estimate tonality
+		 float tonality = m_bitAllocator.estimateTonality(
+		 m_mdctSignals[ch],
+		 grpData.sfbOffsets,
+		 sfb,
+		 sfbWidth
+		 );
+		 
+		 const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+		 
+		 */
+		
+		// Use continuous tonality values - no arbitrary thresholds!
+		// tonality = 1.0 (pure tone) → +maxAdjustment% more bits (reduce step size)
+		// tonality = 0.5 (neutral)  → no change
+		// tonality = 0.0 (pure noise) → +maxAdjustment% fewer bits (increase step size)
 		//	float tonalityAdjustment = maxAdjustment * (0.5f - tonality);
 		//	float adjustmentFactor = 1.0f + tonalityAdjustment;
-			
-			// Apply the adjustment
+		
+		// Apply the adjustment
 		//	sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
-			
-			// Ensure step size stays within reasonable bounds
-			//sfbStepSizes[stepIdx] = __max(128u, __min(65536u, sfbStepSizes[stepIdx]));
+		
+		// Ensure step size stays within reasonable bounds
+		//sfbStepSizes[stepIdx] = __max(128u, __min(65536u, sfbStepSizes[stepIdx]));
 		//}
-	//}
-
-	// Add safety check for ALL bitrate modes to prevent bitrate overshoot
-	// ==========================================================================================
-	// MUCH MORE AGGRESSIVE safety check - guaranteed to prevent overshoot
-	// ==========================================================================================
-	{
-		// Calculate average step size to ensure we're not allocating too many bits
-		uint64_t totalStepSize = 0;
-		unsigned stepCount = 0;
+		//}
 		
-		for (unsigned ch = 0; ch < nChannels; ch++) {
-			if (ch == lfeChannelIndex) continue;
-			const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
-			for (unsigned sfb = 0; sfb < numSfb; sfb++) {
-				totalStepSize += sfbStepSizes[ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb];
-				stepCount++;
+		// Add safety check for ALL bitrate modes to prevent bitrate overshoot
+		// ==========================================================================================
+		// MUCH MORE AGGRESSIVE safety check - guaranteed to prevent overshoot
+		// ==========================================================================================
+		{
+			// Calculate average step size to ensure we're not allocating too many bits
+			uint64_t totalStepSize = 0;
+			unsigned stepCount = 0;
+			
+			for (unsigned ch = 0; ch < nChannels; ch++) {
+				if (ch == lfeChannelIndex) continue;
+				const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
+				for (unsigned sfb = 0; sfb < numSfb; sfb++) {
+					totalStepSize += sfbStepSizes[ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb];
+					stepCount++;
+				}
 			}
-		}
-		
-		if (stepCount > 0) {
-			const uint64_t avgStepSize = totalStepSize / stepCount;
 			
-			// MUCH more conservative thresholds - use a high floor to prevent overshoot
-			// All modes stay reasonably high to prevent bitrate explosion
-			const uint64_t minAvgStepSize = __max(1200u, 1700u - (m_bitRateMode * 50u)); // Floor at 1200, gentle slope
-			
-			if (avgStepSize < minAvgStepSize) {
-				const float globalScale = (float)minAvgStepSize / avgStepSize;
+			if (stepCount > 0) {
+				const uint64_t avgStepSize = totalStepSize / stepCount;
 				
-				// Apply global scaling to prevent bitrate overshoot
-				for (unsigned ch = 0; ch < nChannels; ch++) {
-					if (ch == lfeChannelIndex) continue;
-					const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
-					for (unsigned sfb = 0; sfb < numSfb; sfb++) {
-						const unsigned idx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
-						sfbStepSizes[idx] = (uint32_t)(sfbStepSizes[idx] * globalScale);
-						// Ensure bounds are still respected after scaling
-						sfbStepSizes[idx] = __max(128u, __min(65536u, sfbStepSizes[idx]));
+				// MUCH more conservative thresholds - use a high floor to prevent overshoot
+				// All modes stay reasonably high to prevent bitrate explosion
+				const uint64_t minAvgStepSize = __max(1200u, 1700u - (m_bitRateMode * 50u)); // Floor at 1200, gentle slope
+				
+				if (avgStepSize < minAvgStepSize) {
+					const float globalScale = (float)minAvgStepSize / avgStepSize;
+					
+					// Apply global scaling to prevent bitrate overshoot
+					for (unsigned ch = 0; ch < nChannels; ch++) {
+						if (ch == lfeChannelIndex) continue;
+						const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
+						for (unsigned sfb = 0; sfb < numSfb; sfb++) {
+							const unsigned idx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+							sfbStepSizes[idx] = (uint32_t)(sfbStepSizes[idx] * globalScale);
+							// Ensure bounds are still respected after scaling
+							sfbStepSizes[idx] = __max(128u, __min(65536u, sfbStepSizes[idx]));
+						}
 					}
 				}
 			}
-		}
-	}    // END OF TONALITY SECTION
-
-  // get means of spectral and temporal flatness for every channel
-  m_bitAllocator.getChAverageSpecFlat (meanSpecFlat, nChannels);
-
-  for (unsigned el = 0; el < m_numElements; el++)  // element loop
-  {
-    CoreCoderData& coreConfig = *m_elementData[el];
-    const unsigned nrChannels = (coreConfig.elementType & 1) + 1; // for UsacCoreCoderData()
-
-    if (coreConfig.elementType >= ID_USAC_LFE) // LFE/EXT elements
-    {
-      SfbGroupData& grpData = coreConfig.groupingData[0];
-      uint32_t*   stepSizes = &sfbStepSizes[ci * m_numSwbShort * NUM_WINDOW_GROUPS];
-      const uint16_t*   off = grpData.sfbOffsets;
-      const uint32_t*   rms = grpData.sfbRmsValues;
-      uint8_t* scaleFactors = grpData.scaleFactors;
-
-      for (uint16_t b = 0; b < grpData.sfbsPerGroup; b++)
-      {
-        const unsigned lfConst = (samplingRate < 27713 ? 1 : 2);
-        const unsigned lfAtten = 4 + b * lfConst; // LF SNR boost, cf my M.Sc. thesis, p. 54
-        const uint8_t sfbWidth = off[b + 1] - off[b];
-        const uint64_t   scale = scaleBr * __min (32, lfAtten); // rate control part 1 (SFB)
-
-        // scale step-sizes according to VBR mode, then derive scale factors from step-sizes
-        stepSizes[b] = uint32_t (__max (BA_EPS, ((1u << 9) + stepSizes[b] * scale) >> 10));
-
-        scaleFactors[b] = m_bitAllocator.getScaleFac (stepSizes[b], &m_mdctSignals[ci][off[b]], sfbWidth, rms[b]);
-      }
-      ci++;
-    }
-    else // SCE or CPE: bandwidth-to-max_sfb mapping, short-window grouping for each channel
-    {
-      const bool  eightShorts0 = (coreConfig.icsInfoCurr[0].windowSequence == EIGHT_SHORT);
-      const TnsData&  tnsData0 = coreConfig.tnsData[0];
-      const TnsData&  tnsData1 = coreConfig.tnsData[1];
-      uint8_t realOnlyStartSfb = (eightShorts0 ? m_numSwbShort : m_numSwbLong) - __max (tnsData0.filterLength[0], tnsData1.filterLength[0]);
-
-      if (coreConfig.commonWindow && (coreConfig.stereoMode == 0) && (m_perCorrHCurr[el] > SCHAR_MAX || m_perCorrLCurr[el] > (UCHAR_MAX * 5) / 8))
-      {
-        coreConfig.stereoMode = 1;
-      }
-      if (m_perCorrHCurr[el] > 128) // execute stereo pre-processing to increase correlation
-      {
-        const int16_t chanCorrSign = (coreConfig.stereoConfig & 2 ? -1 : 1);
-        const uint16_t nSamplesMax = (useMaxBandwidth ? nSamplesInFrame : swbOffsetsL[m_swbTableIdx][__min (m_numSwbLong, maxSfbLong + 1)]);
-        const bool reducedStrength = (coreConfig.tnsActive && (m_bitRateMode > 0)) || (m_bitRateMode >= 5);
-        const uint8_t steppFadeOff = CLIP_UCHAR (((m_bitRateMode + 77000 / samplingRate) & 14) << (eightShorts0 ? 2 : 5));
-#if BA_MORE_CBR
-        const uint8_t steppFadeLen = (eightShorts0 ? 4 : (reducedStrength || (m_bitRateMode == 0) ? 32 : 64));
-        const int64_t steppWeightI = __min (64, m_perCorrHCurr[el] - 128) >> ((eightShorts0 && (m_bitRateMode > 0)) || reducedStrength ? 1 : 0); // crosstalk * 128
-#else
-        const uint8_t steppFadeLen = (eightShorts0 ? 4 : (reducedStrength ? 32 : 64));
-        const int64_t steppWeightI = __min (64, m_perCorrHCurr[el] - 128) >> (eightShorts0 || reducedStrength ? 1 : 0); // crosstalk * 128
-#endif
-        const int64_t steppWeightD = 128 - steppWeightI; // decrement, (1 - crosstalk) * 128
-
-        for (uint16_t n = 0, gr = 0; gr < coreConfig.groupingData[0].numWindowGroups; gr++)
-        {
-          const uint8_t grpLength = coreConfig.groupingData[0].windowGroupLength[gr];
-          const uint16_t*  grpOff = &coreConfig.groupingData[0].sfbOffsets[m_numSwbShort * gr];
-          const uint16_t grpStart = grpOff[0] + steppFadeOff * grpLength;
-          int32_t* sigR0 = &m_mdctSignals[ci][grpStart];
-          int32_t* sigR1 = &m_mdctSignals[ci + 1][grpStart];
-          int64_t xTalkI = 0, xTalkD = 0; // weights for crosstalk
-
-          if ((grpLength == 1) && (tnsData0.numFilters[n] > 0 || tnsData1.numFilters[n] > 0))
-          {
-            const uint16_t maxLen = (eightShorts0 ? grpOff[m_numSwbShort] - 1 : __min (nSamplesInFrame - 1u, nSamplesMax)) - grpStart;
-            int32_t prevR0 = 0; // NOTE: functions also on grouped
-            int32_t prevR1 = 0; // MDCT spectra, but not properly!
-
-            for (uint16_t w = 0; w < grpLength; w++) // sub-window
-            {
-              prevR0 = *(sigR0++); prevR1 = *(sigR1++); // processing starts at offset of 1!
-              xTalkI = steppWeightI;
-              xTalkD = steppWeightD * (2 * steppFadeLen - 1);
-
-              for (s = steppFadeLen - 1; s > 0; s--, sigR0++, sigR1++) // start with fade-in
-              {
-                applyStereoPreProcessingReal (sigR0, sigR1, &prevR0, &prevR1, xTalkI, xTalkD, chanCorrSign);
-                xTalkI += steppWeightI;
-                xTalkD -= steppWeightD;
-              }
-            }
-            for (s = maxLen - steppFadeLen * grpLength; s > 0; s--, sigR0++, sigR1++) // end
-            {
-              applyStereoPreProcessingReal (sigR0, sigR1, &prevR0, &prevR1, xTalkI, xTalkD, chanCorrSign);
-            }
-            if (eightShorts0 || (nSamplesMax >= nSamplesInFrame)) *sigR0 = *sigR1 = 0;
-
-            realOnlyStartSfb = __min (realOnlyStartSfb, __min ((eightShorts0 ? 5 : 24), steppFadeOff / (eightShorts0 ? 4 : 7)));
-          }
-          else // TNS inactive, both MDCTs and MDSTs are available
-          {
-            const uint16_t maxLen = (eightShorts0 ? grpOff[m_numSwbShort] : nSamplesMax) - grpStart;
-            int32_t* sigI0 = &m_mdstSignals[ci][grpStart]; // imag
-            int32_t* sigI1 = &m_mdstSignals[ci + 1][grpStart];
-
-            for (uint16_t w = 0; w < grpLength; w++) // sub-window
-            {
-              sigR0++;  sigR1++;  sigI0++;  sigI1++; // processing starts at an offset of 1!
-              xTalkI = steppWeightI;
-              xTalkD = steppWeightD * (2 * steppFadeLen - 1);
-
-              for (s = steppFadeLen - 1; s > 0; s--, sigR0++, sigR1++, sigI0++, sigI1++)
-              {
-                applyStereoPreProcessingCplx (sigR0, sigR1, sigI0, sigI1, xTalkI, xTalkD, chanCorrSign);
-                xTalkI += steppWeightI;
-                xTalkD -= steppWeightD;
-              }
-            }
-            for (s = maxLen - steppFadeLen * grpLength; s > 0; s--, sigR0++, sigR1++, sigI0++, sigI1++)
-            {
-              applyStereoPreProcessingCplx (sigR0, sigR1, sigI0, sigI1, xTalkI, xTalkD, chanCorrSign);
-            }
-          }
-          if (grpLength == 1) n++;
-        }
-      } // if m_perCorrHCurr[el] > 128
-
-      if ((errorValue == 0) && (coreConfig.stereoMode > 0)) // perform M/S, synch statistics
-      {
-        const uint8_t   numSwbFrame = (eightShorts0 ? m_numSwbShort : __min (m_numSwbLong, maxSfbLong + 1));
-        const uint32_t peakIndexSte = __max ((m_specAnaCurr[ci] >> 5) & 2047, (m_specAnaCurr[ci + 1] >> 5) & 2047) << 5;
-
-        errorValue = m_stereoCoder.applyPredJointStereo (m_mdctSignals[ci], m_mdctSignals[ci + 1],
-                                                         m_mdstSignals[ci], m_mdstSignals[ci + 1],
-                                                         coreConfig.groupingData[0], coreConfig.groupingData[1],
-                                                         coreConfig.tnsData[0], coreConfig.tnsData[1],
-                                                         numSwbFrame, coreConfig.stereoDataCurr,
-                                                         m_bitRateMode, coreConfig.stereoMode > 1,
-                                                         (coreConfig.stereoConfig & 2) > 0, realOnlyStartSfb,
-                                                         &sfbStepSizes[m_numSwbShort * NUM_WINDOW_GROUPS *  ci],
-                                                         &sfbStepSizes[m_numSwbShort * NUM_WINDOW_GROUPS * (ci + 1)]);
-        if (errorValue >= 2) // signal M/S with complex prediction
-        {
-          coreConfig.stereoConfig |= (errorValue & 7) - 2; // dir.
-          coreConfig.stereoMode += 2; errorValue = 0;
-        }
-        m_specAnaCurr[ci    ] = (m_specAnaCurr[ci    ] & (UINT_MAX - 65504)) | peakIndexSte;
-        m_specAnaCurr[ci + 1] = (m_specAnaCurr[ci + 1] & (UINT_MAX - 65504)) | peakIndexSte;
-        meanSpecFlat[ci] = meanSpecFlat[ci + 1] = ((uint16_t) meanSpecFlat[ci] + (uint16_t) meanSpecFlat[ci + 1]) >> 1;
-      }
-      else memset (coreConfig.stereoDataCurr, 0, (eightShorts0 || !coreConfig.commonWindow
-                                                  ? MAX_NUM_SWB_SHORT * NUM_WINDOW_GROUPS : MAX_NUM_SWB_LONG) * sizeof (uint8_t));
-		//  DECLARE: Array for sibilant detection results
-		bool channelSibilantDetected[USAC_MAX_NUM_CHANNELS] = {false};
+		}    // END OF TONALITY SECTION
 		
-		//  CALL: Pass the array to get results for all channels in this element
-		errorValue |= m_bitAllocator.imprSfbStepSizes (m_scaleFacData, m_numSwbShort, m_mdctSignals, nSamplesInFrame, nrChannels,
-													   ((32 + 5 * m_shiftValSBR) * samplingRate) >> 5, sfbStepSizes, ci, meanSpecFlat,
-													   channelSibilantDetected,  // Pass array (before default params)
-													   coreConfig.commonWindow, coreConfig.stereoDataCurr, coreConfig.stereoConfig);
-
-
-      for (unsigned ch = 0; ch < nrChannels; ch++) // channel loop
-      {
-		  m_sibilantDetected[ci + ch] = channelSibilantDetected[ch];
-        SfbGroupData&  grpData = coreConfig.groupingData[ch];
-        const bool eightShorts = (coreConfig.icsInfoCurr[ch].windowSequence == EIGHT_SHORT);
-        const uint8_t maxSfbCh = grpData.sfbsPerGroup;
+		// get means of spectral and temporal flatness for every channel
+		m_bitAllocator.getChAverageSpecFlat (meanSpecFlat, nChannels);
+		
+		for (unsigned el = 0; el < m_numElements; el++)  // element loop
+		{
+			CoreCoderData& coreConfig = *m_elementData[el];
+			const unsigned nrChannels = (coreConfig.elementType & 1) + 1; // for UsacCoreCoderData()
+			
+			if (coreConfig.elementType >= ID_USAC_LFE) // LFE/EXT elements
+			{
+				SfbGroupData& grpData = coreConfig.groupingData[0];
+				uint32_t*   stepSizes = &sfbStepSizes[ci * m_numSwbShort * NUM_WINDOW_GROUPS];
+				const uint16_t*   off = grpData.sfbOffsets;
+				const uint32_t*   rms = grpData.sfbRmsValues;
+				uint8_t* scaleFactors = grpData.scaleFactors;
+				
+				for (uint16_t b = 0; b < grpData.sfbsPerGroup; b++)
+				{
+					const unsigned lfConst = (samplingRate < 27713 ? 1 : 2);
+					const unsigned lfAtten = 4 + b * lfConst; // LF SNR boost, cf my M.Sc. thesis, p. 54
+					const uint8_t sfbWidth = off[b + 1] - off[b];
+					const uint64_t   scale = scaleBr * __min (32, lfAtten); // rate control part 1 (SFB)
+					
+					// scale step-sizes according to VBR mode, then derive scale factors from step-sizes
+					stepSizes[b] = uint32_t (__max (BA_EPS, ((1u << 9) + stepSizes[b] * scale) >> 10));
+					
+					scaleFactors[b] = m_bitAllocator.getScaleFac (stepSizes[b], &m_mdctSignals[ci][off[b]], sfbWidth, rms[b]);
+				}
+				ci++;
+			}
+			else // SCE or CPE: bandwidth-to-max_sfb mapping, short-window grouping for each channel
+			{
+				const bool  eightShorts0 = (coreConfig.icsInfoCurr[0].windowSequence == EIGHT_SHORT);
+				const TnsData&  tnsData0 = coreConfig.tnsData[0];
+				const TnsData&  tnsData1 = coreConfig.tnsData[1];
+				uint8_t realOnlyStartSfb = (eightShorts0 ? m_numSwbShort : m_numSwbLong) - __max (tnsData0.filterLength[0], tnsData1.filterLength[0]);
+				
+				if (coreConfig.commonWindow && (coreConfig.stereoMode == 0) && (m_perCorrHCurr[el] > SCHAR_MAX || m_perCorrLCurr[el] > (UCHAR_MAX * 5) / 8))
+				{
+					coreConfig.stereoMode = 1;
+				}
+				if (m_perCorrHCurr[el] > 128) // execute stereo pre-processing to increase correlation
+				{
+					const int16_t chanCorrSign = (coreConfig.stereoConfig & 2 ? -1 : 1);
+					const uint16_t nSamplesMax = (useMaxBandwidth ? nSamplesInFrame : swbOffsetsL[m_swbTableIdx][__min (m_numSwbLong, maxSfbLong + 1)]);
+					const bool reducedStrength = (coreConfig.tnsActive && (m_bitRateMode > 0)) || (m_bitRateMode >= 5);
+					const uint8_t steppFadeOff = CLIP_UCHAR (((m_bitRateMode + 77000 / samplingRate) & 14) << (eightShorts0 ? 2 : 5));
+#if BA_MORE_CBR
+					const uint8_t steppFadeLen = (eightShorts0 ? 4 : (reducedStrength || (m_bitRateMode == 0) ? 32 : 64));
+					const int64_t steppWeightI = __min (64, m_perCorrHCurr[el] - 128) >> ((eightShorts0 && (m_bitRateMode > 0)) || reducedStrength ? 1 : 0); // crosstalk * 128
+#else
+					const uint8_t steppFadeLen = (eightShorts0 ? 4 : (reducedStrength ? 32 : 64));
+					const int64_t steppWeightI = __min (64, m_perCorrHCurr[el] - 128) >> (eightShorts0 || reducedStrength ? 1 : 0); // crosstalk * 128
+#endif
+					const int64_t steppWeightD = 128 - steppWeightI; // decrement, (1 - crosstalk) * 128
+					
+					for (uint16_t n = 0, gr = 0; gr < coreConfig.groupingData[0].numWindowGroups; gr++)
+					{
+						const uint8_t grpLength = coreConfig.groupingData[0].windowGroupLength[gr];
+						const uint16_t*  grpOff = &coreConfig.groupingData[0].sfbOffsets[m_numSwbShort * gr];
+						const uint16_t grpStart = grpOff[0] + steppFadeOff * grpLength;
+						int32_t* sigR0 = &m_mdctSignals[ci][grpStart];
+						int32_t* sigR1 = &m_mdctSignals[ci + 1][grpStart];
+						int64_t xTalkI = 0, xTalkD = 0; // weights for crosstalk
+						
+						if ((grpLength == 1) && (tnsData0.numFilters[n] > 0 || tnsData1.numFilters[n] > 0))
+						{
+							const uint16_t maxLen = (eightShorts0 ? grpOff[m_numSwbShort] - 1 : __min (nSamplesInFrame - 1u, nSamplesMax)) - grpStart;
+							int32_t prevR0 = 0; // NOTE: functions also on grouped
+							int32_t prevR1 = 0; // MDCT spectra, but not properly!
+							
+							for (uint16_t w = 0; w < grpLength; w++) // sub-window
+							{
+								prevR0 = *(sigR0++); prevR1 = *(sigR1++); // processing starts at offset of 1!
+								xTalkI = steppWeightI;
+								xTalkD = steppWeightD * (2 * steppFadeLen - 1);
+								
+								for (s = steppFadeLen - 1; s > 0; s--, sigR0++, sigR1++) // start with fade-in
+								{
+									applyStereoPreProcessingReal (sigR0, sigR1, &prevR0, &prevR1, xTalkI, xTalkD, chanCorrSign);
+									xTalkI += steppWeightI;
+									xTalkD -= steppWeightD;
+								}
+							}
+							for (s = maxLen - steppFadeLen * grpLength; s > 0; s--, sigR0++, sigR1++) // end
+							{
+								applyStereoPreProcessingReal (sigR0, sigR1, &prevR0, &prevR1, xTalkI, xTalkD, chanCorrSign);
+							}
+							if (eightShorts0 || (nSamplesMax >= nSamplesInFrame)) *sigR0 = *sigR1 = 0;
+							
+							realOnlyStartSfb = __min (realOnlyStartSfb, __min ((eightShorts0 ? 5 : 24), steppFadeOff / (eightShorts0 ? 4 : 7)));
+						}
+						else // TNS inactive, both MDCTs and MDSTs are available
+						{
+							const uint16_t maxLen = (eightShorts0 ? grpOff[m_numSwbShort] : nSamplesMax) - grpStart;
+							int32_t* sigI0 = &m_mdstSignals[ci][grpStart]; // imag
+							int32_t* sigI1 = &m_mdstSignals[ci + 1][grpStart];
+							
+							for (uint16_t w = 0; w < grpLength; w++) // sub-window
+							{
+								sigR0++;  sigR1++;  sigI0++;  sigI1++; // processing starts at an offset of 1!
+								xTalkI = steppWeightI;
+								xTalkD = steppWeightD * (2 * steppFadeLen - 1);
+								
+								for (s = steppFadeLen - 1; s > 0; s--, sigR0++, sigR1++, sigI0++, sigI1++)
+								{
+									applyStereoPreProcessingCplx (sigR0, sigR1, sigI0, sigI1, xTalkI, xTalkD, chanCorrSign);
+									xTalkI += steppWeightI;
+									xTalkD -= steppWeightD;
+								}
+							}
+							for (s = maxLen - steppFadeLen * grpLength; s > 0; s--, sigR0++, sigR1++, sigI0++, sigI1++)
+							{
+								applyStereoPreProcessingCplx (sigR0, sigR1, sigI0, sigI1, xTalkI, xTalkD, chanCorrSign);
+							}
+						}
+						if (grpLength == 1) n++;
+					}
+				} // if m_perCorrHCurr[el] > 128
+				
+				if ((errorValue == 0) && (coreConfig.stereoMode > 0)) // perform M/S, synch statistics
+				{
+					const uint8_t   numSwbFrame = (eightShorts0 ? m_numSwbShort : __min (m_numSwbLong, maxSfbLong + 1));
+					const uint32_t peakIndexSte = __max ((m_specAnaCurr[ci] >> 5) & 2047, (m_specAnaCurr[ci + 1] >> 5) & 2047) << 5;
+					
+					errorValue = m_stereoCoder.applyPredJointStereo (m_mdctSignals[ci], m_mdctSignals[ci + 1],
+																	 m_mdstSignals[ci], m_mdstSignals[ci + 1],
+																	 coreConfig.groupingData[0], coreConfig.groupingData[1],
+																	 coreConfig.tnsData[0], coreConfig.tnsData[1],
+																	 numSwbFrame, coreConfig.stereoDataCurr,
+																	 m_bitRateMode, coreConfig.stereoMode > 1,
+																	 (coreConfig.stereoConfig & 2) > 0, realOnlyStartSfb,
+																	 &sfbStepSizes[m_numSwbShort * NUM_WINDOW_GROUPS *  ci],
+																	 &sfbStepSizes[m_numSwbShort * NUM_WINDOW_GROUPS * (ci + 1)]);
+					if (errorValue >= 2) // signal M/S with complex prediction
+					{
+						coreConfig.stereoConfig |= (errorValue & 7) - 2; // dir.
+						coreConfig.stereoMode += 2; errorValue = 0;
+					}
+					m_specAnaCurr[ci    ] = (m_specAnaCurr[ci    ] & (UINT_MAX - 65504)) | peakIndexSte;
+					m_specAnaCurr[ci + 1] = (m_specAnaCurr[ci + 1] & (UINT_MAX - 65504)) | peakIndexSte;
+					meanSpecFlat[ci] = meanSpecFlat[ci + 1] = ((uint16_t) meanSpecFlat[ci] + (uint16_t) meanSpecFlat[ci + 1]) >> 1;
+				}
+				else memset (coreConfig.stereoDataCurr, 0, (eightShorts0 || !coreConfig.commonWindow
+															? MAX_NUM_SWB_SHORT * NUM_WINDOW_GROUPS : MAX_NUM_SWB_LONG) * sizeof (uint8_t));
+				//  DECLARE: Array for sibilant detection results
+				bool channelSibilantDetected[USAC_MAX_NUM_CHANNELS] = {false};
+				
+				//  CALL: Pass the array to get results for all channels in this element
+				errorValue |= m_bitAllocator.imprSfbStepSizes (m_scaleFacData, m_numSwbShort, m_mdctSignals, nSamplesInFrame, nrChannels,
+															   ((32 + 5 * m_shiftValSBR) * samplingRate) >> 5, sfbStepSizes, ci, meanSpecFlat,
+															   channelSibilantDetected,  // Pass array (before default params)
+															   coreConfig.commonWindow, coreConfig.stereoDataCurr, coreConfig.stereoConfig);
+				
+				
+				for (unsigned ch = 0; ch < nrChannels; ch++) // channel loop
+				{
+					// temp to disable sib detection
+					m_sibilantDetected[ci + ch] = channelSibilantDetected[ch];
+					//m_sibilantDetected[ci + ch] = false;
+					
+					SfbGroupData&  grpData = coreConfig.groupingData[ch];
+					const bool eightShorts = (coreConfig.icsInfoCurr[ch].windowSequence == EIGHT_SHORT);
+					const uint8_t maxSfbCh = grpData.sfbsPerGroup;
 #if !RESTRICT_TO_AAC
-        const uint8_t numSwbCh = (eightShorts ? m_numSwbShort : m_numSwbLong);
+					const uint8_t numSwbCh = (eightShorts ? m_numSwbShort : m_numSwbLong);
 #endif
 #if !EE_MORE_MSE
-        const uint16_t rateFac = m_bitAllocator.getRateCtrlFac (m_rateFactor, samplingRate, meanSpecFlat[ci], coreConfig.icsInfoPrev[ch].windowSequence == EIGHT_SHORT);
+					const uint16_t rateFac = m_bitAllocator.getRateCtrlFac (m_rateFactor, samplingRate, meanSpecFlat[ci], coreConfig.icsInfoPrev[ch].windowSequence == EIGHT_SHORT);
 #endif
-        uint32_t*    stepSizes = &sfbStepSizes[ci * m_numSwbShort * NUM_WINDOW_GROUPS];
-
-        memset (grpData.scaleFactors, 0, (MAX_NUM_SWB_SHORT * NUM_WINDOW_GROUPS) * sizeof (uint8_t));
-
-        for (uint16_t gr = 0; gr < grpData.numWindowGroups; gr++)
-        {
-          const uint16_t* grpOff = &grpData.sfbOffsets[m_numSwbShort * gr];
-          const uint32_t* grpRms = &grpData.sfbRmsValues[m_numSwbShort * gr];
-          uint8_t*  grpScaleFacs = &grpData.scaleFactors[m_numSwbShort * gr];
-          uint32_t* grpStepSizes = &stepSizes[m_numSwbShort * gr];
-
+					uint32_t*    stepSizes = &sfbStepSizes[ci * m_numSwbShort * NUM_WINDOW_GROUPS];
+					
+					memset (grpData.scaleFactors, 0, (MAX_NUM_SWB_SHORT * NUM_WINDOW_GROUPS) * sizeof (uint8_t));
+					
+					for (uint16_t gr = 0; gr < grpData.numWindowGroups; gr++)
+					{
+						const uint16_t* grpOff = &grpData.sfbOffsets[m_numSwbShort * gr];
+						const uint32_t* grpRms = &grpData.sfbRmsValues[m_numSwbShort * gr];
+						uint8_t*  grpScaleFacs = &grpData.scaleFactors[m_numSwbShort * gr];
+						uint32_t* grpStepSizes = &stepSizes[m_numSwbShort * gr];
+						
 #if EE_MORE_MSE
-          s = 0;
-          for (unsigned b = grpOff[0]; b < grpOff[maxSfbCh]; b++)
-          {
-            s += unsigned (0.5 + pow ((double) abs (m_mdctSignals[ci][b]), 1.0 / 3.0));
-          }
-          if (el == 0 && nrChannels == 2)
-          {
-            for (unsigned b = grpOff[0]; b < grpOff[maxSfbCh]; b++)
-            {
-              s += unsigned (0.5 + pow ((double) abs (m_mdctSignals[1 - ci][b]), 1.0 / 3.0));
-            }
-            s = (s + 1u) >> 1;
-          }
-          if (grpOff[maxSfbCh] > grpOff[0])
-          {
-            s = BA_EPS + unsigned ((s * (eightShorts ? 1u + 55u / grpData.windowGroupLength[gr] : 7u) + 16383u) >> 14);
+						s = 0;
+						for (unsigned b = grpOff[0]; b < grpOff[maxSfbCh]; b++)
+						{
+							s += unsigned (0.5 + pow ((double) abs (m_mdctSignals[ci][b]), 1.0 / 3.0));
+						}
+						if (el == 0 && nrChannels == 2)
+						{
+							for (unsigned b = grpOff[0]; b < grpOff[maxSfbCh]; b++)
+							{
+								s += unsigned (0.5 + pow ((double) abs (m_mdctSignals[1 - ci][b]), 1.0 / 3.0));
+							}
+							s = (s + 1u) >> 1;
+						}
+						if (grpOff[maxSfbCh] > grpOff[0])
+						{
+							s = BA_EPS + unsigned ((s * (eightShorts ? 1u + 55u / grpData.windowGroupLength[gr] : 7u) + 16383u) >> 14);
 # ifndef NO_PREROLL_DATA
-            if (((m_frameCount - 1u) % (m_indepPeriod << 1)) == 1 && m_numElements == 1 && !eightShorts) s = (4u + 9u * s) >> 3;
+							if (((m_frameCount - 1u) % (m_indepPeriod << 1)) == 1 && m_numElements == 1 && !eightShorts) s = (4u + 9u * s) >> 3;
 # endif
-          }
-          s = __max (1u + ((UINT32_MAX / (eightShorts ? 3u : 8u)) >> ((2 + m_bitRateMode / 9) * m_bitRateMode)), s * s * s);
+						}
+						s = __max (1u + ((UINT32_MAX / (eightShorts ? 3u : 8u)) >> ((2 + m_bitRateMode / 9) * m_bitRateMode)), s * s * s);
 #endif
-          for (unsigned b = 0; b < maxSfbCh; b++)
-          {
+						for (unsigned b = 0; b < maxSfbCh; b++)
+						{
 #if EE_MORE_MSE
-            const uint8_t sfbWidth = grpOff[b + 1] - grpOff[b];
-            const bool stereoCoded = (nrChannels == 2 && coreConfig.stereoMode > 0 && (coreConfig.stereoDataCurr[b] > 0 || !(coreConfig.stereoMode & 1)));
-            const uint32_t rmsbMax = (stereoCoded ? __max (grpRms[b], coreConfig.groupingData[1 - ch].sfbRmsValues[m_numSwbShort * gr + b]) : grpRms[b]);
-            const uint64_t sThresh = __max (BA_EPS, (rmsbMax * uint64_t (__max (16, b * b * grpData.numWindowGroups)) + 32u) >> 6);
-            const uint64_t predFac = (eightShorts || coreConfig.stereoMode < 3 || coreConfig.stereoDataCurr[b & 62] == 0 ? (sfbWidth < 8 ? 68u - grpData.numWindowGroups : 64u) :
-                                      uint64_t (0.5 + 64 - pow (__min (1.0, fabs (coreConfig.stereoDataCurr[b & 62] * 0.1 - 1.6)), 1.5) * 19.0)); // MS
-            grpStepSizes[b] = uint32_t (__min (sThresh, (s * predFac + 32u) >> 6));
-            if (stereoCoded && rmsbMax)
-            {
-              const uint32_t rmsCh = coreConfig.groupingData[1 - ch].sfbRmsValues[m_numSwbShort * gr + b];
-
-              grpStepSizes[b] = uint32_t (0.5 + grpStepSizes[b] * (1.0 - sqrt ((double) __min (grpRms[b], rmsCh) / rmsbMax) * 0.29289322));
-            }
+							const uint8_t sfbWidth = grpOff[b + 1] - grpOff[b];
+							const bool stereoCoded = (nrChannels == 2 && coreConfig.stereoMode > 0 && (coreConfig.stereoDataCurr[b] > 0 || !(coreConfig.stereoMode & 1)));
+							const uint32_t rmsbMax = (stereoCoded ? __max (grpRms[b], coreConfig.groupingData[1 - ch].sfbRmsValues[m_numSwbShort * gr + b]) : grpRms[b]);
+							const uint64_t sThresh = __max (BA_EPS, (rmsbMax * uint64_t (__max (16, b * b * grpData.numWindowGroups)) + 32u) >> 6);
+							const uint64_t predFac = (eightShorts || coreConfig.stereoMode < 3 || coreConfig.stereoDataCurr[b & 62] == 0 ? (sfbWidth < 8 ? 68u - grpData.numWindowGroups : 64u) :
+													  uint64_t (0.5 + 64 - pow (__min (1.0, fabs (coreConfig.stereoDataCurr[b & 62] * 0.1 - 1.6)), 1.5) * 19.0)); // MS
+							grpStepSizes[b] = uint32_t (__min (sThresh, (s * predFac + 32u) >> 6));
+							if (stereoCoded && rmsbMax)
+							{
+								const uint32_t rmsCh = coreConfig.groupingData[1 - ch].sfbRmsValues[m_numSwbShort * gr + b];
+								
+								grpStepSizes[b] = uint32_t (0.5 + grpStepSizes[b] * (1.0 - sqrt ((double) __min (grpRms[b], rmsCh) / rmsbMax) * 0.29289322));
+							}
 #else
-            const unsigned lfConst = (samplingRate < 27713 && !eightShorts ? 1 : 2); // lfAtten: LF SNR boost, as in my M.Sc. thesis
-            const unsigned lfAtten = (b <= 5 ? (eightShorts ? 1 : 4) + b * lfConst : 5 * lfConst - 1 + b + ((b + 5) >> 4));
-            const uint8_t sfbWidth = grpOff[b + 1] - grpOff[b];
-            const uint64_t   scale = scaleBr * rateFac * __min (32, lfAtten * grpData.numWindowGroups); // rate control part 1 (SFB)
-
-            // scale step-sizes according to VBR mode & derive scale factors from step-sizes
-            grpStepSizes[b] = uint32_t (__max (BA_EPS, ((1u << 24) + grpStepSizes[b] * scale) >> 25));
+							const unsigned lfConst = (samplingRate < 27713 && !eightShorts ? 1 : 2); // lfAtten: LF SNR boost, as in my M.Sc. thesis
+							const unsigned lfAtten = (b <= 5 ? (eightShorts ? 1 : 4) + b * lfConst : 5 * lfConst - 1 + b + ((b + 5) >> 4));
+							const uint8_t sfbWidth = grpOff[b + 1] - grpOff[b];
+							const uint64_t   scale = scaleBr * rateFac * __min (32, lfAtten * grpData.numWindowGroups); // rate control part 1 (SFB)
+							
+							// scale step-sizes according to VBR mode & derive scale factors from step-sizes
+							grpStepSizes[b] = uint32_t (__max (BA_EPS, ((1u << 24) + grpStepSizes[b] * scale) >> 25));
 #endif
 #if !RESTRICT_TO_AAC
-            if (!m_noiseFilling[el] || (m_bitRateMode > 0) || (m_shiftValSBR == 0) || (samplingRate < 23004) ||
-                (b + 3 - (meanSpecFlat[ci] >> 6) < m_numSwbLong)) // HF
+							if (!m_noiseFilling[el] || (m_bitRateMode > 0) || (m_shiftValSBR == 0) || (samplingRate < 23004) ||
+								(b + 3 - (meanSpecFlat[ci] >> 6) < m_numSwbLong)) // HF
 #endif
-            grpScaleFacs[b] = m_bitAllocator.getScaleFac (grpStepSizes[b], &m_mdctSignals[ci][grpOff[b]], sfbWidth, grpRms[b]);
-          }
+								grpScaleFacs[b] = m_bitAllocator.getScaleFac (grpStepSizes[b], &m_mdctSignals[ci][grpOff[b]], sfbWidth, grpRms[b]);
+						}
 #if !SFB_QUANT_PERCEPT_OPT
-          if (m_bitRateMode > 0 && m_numElements == 1)
-          {
-            if (maxSfbCh < (samplingRate < 18783 ? 17 : 24) || !m_frameCount)
-            {
-              for (s = 0; s < 26; s++) m_sfbLoudMem[ch][s][m_frameCount & 31] = uint16_t (m_frameCount ? sqrt ((double) getThr (ch, s)) : 32);
-            }
-            else // limit step-sizes around background noise level
-            {
-              const uint8_t* sd = coreConfig.stereoDataCurr;
-              const unsigned ns = __max (samplingRate < 27713 ? (samplingRate < 18783 ? 17 : 24) : 22, m_specGapFiller.getFirstGapFillSfb ());
-              uint32_t minFrRMS = TA_EPS >> EE_MORE_MSE;
-
-              for (s = ns; s < __min (ns + 26u, maxSfbCh); s++)
-              {
-                uint16_t* const lm = m_sfbLoudMem[ch][s - ns];
-                uint32_t minSfbMem = INT_MAX;
-
-                lm[m_frameCount & 31] = __max (BA_EPS, uint16_t (sqrt (double (sd[s] ? __max (grpRms[s], coreConfig.groupingData[1 - ch].sfbRmsValues[s]) : grpRms[s]))));
-
-                for (int f = 0; f < 32; f++)
-                {
-                  const uint32_t slm = (uint32_t) lm[f] * lm[f];
-
-                  if (minSfbMem > slm && slm > BA_EPS) minSfbMem = slm;
-                }
-                if (minSfbMem < INT_MAX)
-                {
-                  const uint32_t w = grpOff[s + 1] - grpOff[s];
-
-                  minSfbMem = (((minSfbMem + 2u) >> 2) + getThr (ch, s - ns) + w - 1u) / w;
-                  if (minFrRMS > minSfbMem) minFrRMS = minSfbMem;
-                }
-              }
-              for (s -= ns; s < 26; s++) m_sfbLoudMem[ch][s][m_frameCount & 31] = BA_EPS;
-
-              for (s = (minFrRMS < (TA_EPS >> EE_MORE_MSE) ? ns : 99); s < maxSfbCh; s++)
-              {
-                const uint32_t w = grpOff[s + 1] - grpOff[s];
-
-                if (stepSizes[s] < minFrRMS * (w >> (sd[s] ? 1 : 0)))
-                  grpScaleFacs[s] = m_bitAllocator.getScaleFac (minFrRMS * (w >> (sd[s] ? 1 : 0)), &m_mdctSignals[ci][grpOff[s]], w, grpRms[s]);
-              }
-            }
-          }
+						if (m_bitRateMode > 0 && m_numElements == 1)
+						{
+							if (maxSfbCh < (samplingRate < 18783 ? 17 : 24) || !m_frameCount)
+							{
+								for (s = 0; s < 26; s++) m_sfbLoudMem[ch][s][m_frameCount & 31] = uint16_t (m_frameCount ? sqrt ((double) getThr (ch, s)) : 32);
+							}
+							else // limit step-sizes around background noise level
+							{
+								const uint8_t* sd = coreConfig.stereoDataCurr;
+								const unsigned ns = __max (samplingRate < 27713 ? (samplingRate < 18783 ? 17 : 24) : 22, m_specGapFiller.getFirstGapFillSfb ());
+								uint32_t minFrRMS = TA_EPS >> EE_MORE_MSE;
+								
+								for (s = ns; s < __min (ns + 26u, maxSfbCh); s++)
+								{
+									uint16_t* const lm = m_sfbLoudMem[ch][s - ns];
+									uint32_t minSfbMem = INT_MAX;
+									
+									lm[m_frameCount & 31] = __max (BA_EPS, uint16_t (sqrt (double (sd[s] ? __max (grpRms[s], coreConfig.groupingData[1 - ch].sfbRmsValues[s]) : grpRms[s]))));
+									
+									for (int f = 0; f < 32; f++)
+									{
+										const uint32_t slm = (uint32_t) lm[f] * lm[f];
+										
+										if (minSfbMem > slm && slm > BA_EPS) minSfbMem = slm;
+									}
+									if (minSfbMem < INT_MAX)
+									{
+										const uint32_t w = grpOff[s + 1] - grpOff[s];
+										
+										minSfbMem = (((minSfbMem + 2u) >> 2) + getThr (ch, s - ns) + w - 1u) / w;
+										if (minFrRMS > minSfbMem) minFrRMS = minSfbMem;
+									}
+								}
+								for (s -= ns; s < 26; s++) m_sfbLoudMem[ch][s][m_frameCount & 31] = BA_EPS;
+								
+								for (s = (minFrRMS < (TA_EPS >> EE_MORE_MSE) ? ns : 99); s < maxSfbCh; s++)
+								{
+									const uint32_t w = grpOff[s + 1] - grpOff[s];
+									
+									if (stepSizes[s] < minFrRMS * (w >> (sd[s] ? 1 : 0)))
+										grpScaleFacs[s] = m_bitAllocator.getScaleFac (minFrRMS * (w >> (sd[s] ? 1 : 0)), &m_mdctSignals[ci][grpOff[s]], w, grpRms[s]);
+								}
+							}
+						}
 #endif
-        } // for gr
-
+					} // for gr
+					
 #if !RESTRICT_TO_AAC
-        if ((maxSfbCh > 0) && m_noiseFilling[el] && (m_shiftValSBR > 0 || m_bitRateMode <= 3 || !eightShorts))
-        {
-          const uint32_t maxSfbCurr = (eightShorts ? (useMaxBandwidth ? __min (15, 17 - (samplingRate >> 13) + (samplingRate >> 15))
-                                                                      : brModeAndFsToMaxSfbShort (m_bitRateMode, samplingRate)) : maxSfbLong);
-          const bool keepMaxSfbCurr = ((samplingRate < 37566) || (samplingRate >= 46009 && samplingRate < 55426 && eightShorts));
-          const uint8_t numSwbFrame = __min ((numSwbCh * ((maxSfbCh == maxSfbCurr) || (m_bitRateMode <= 2) || (m_shiftValSBR > 0) ? 4u : 3u)) >> 2,
-                                             maxSfbCurr + (m_bitRateMode < 2 || (m_bitRateMode >> 2) == 1 || keepMaxSfbCurr ? 0u : 1u));
-
-          if ((m_bitRateMode == 0) && (m_numElements == 1) && (samplingRate < 27713) && eightShorts)
-          {
-            for (s = 0; s < 26; s++) m_sfbLoudMem[ch][s][m_frameCount & 31] = uint16_t (sqrt ((double) getThr (ch, s)));
-          }
-          if ((maxSfbCh < numSwbFrame) || (m_bitRateMode <= 2)) // increase coding bandwidth
-          {
-            for (uint16_t gr = 0; gr < grpData.numWindowGroups; gr++)
-            {
-              const uint32_t*  grpRms = &grpData.sfbRmsValues[m_numSwbShort * gr];
-
-              if ((m_bitRateMode == 0) && (m_numElements == 1) && (samplingRate < 27713))
-              {
-                const uint32_t*  refRms = &coreConfig.groupingData[1 - ch].sfbRmsValues[m_numSwbShort * gr];
-                uint8_t*  grpStereoData = &coreConfig.stereoDataCurr[m_numSwbShort * gr];
-                const unsigned sfbStart = __max (samplingRate < 18783 ? 17 : 24, m_specGapFiller.getFirstGapFillSfb ());
-
-                for (s = sfbStart; s < maxSfbCh; s++)
-                {
-                  const double rmsValue = double (grpStereoData[s] > 0 ? (grpRms[s] + (uint64_t) refRms[s] + 1) >> 1 : grpRms[s]);
-                  const unsigned sfbIdx = s - sfbStart;
-
-                  m_sfbLoudMem[ch][sfbIdx][m_frameCount & 31] = __max (BA_EPS, uint16_t (sqrt (rmsValue)));
-                  if (grpRms[s] < (getThr (ch, sfbIdx) >> (samplingRate >> 13))) grpData.scaleFactors[s + m_numSwbShort * gr] = 0;
-                }
-              }
-              else if ((m_bitRateMode <= 4) && (meanSpecFlat[ci] <= (SCHAR_MAX >> 1))) // lo
-              {
-                for (s = __max (samplingRate < 27713 ? (samplingRate < 18783 ? 17 : 24) : 22, m_specGapFiller.getFirstGapFillSfb ()); s < maxSfbCh; s++)
-                {
-                  if (grpRms[s] < ((3 * TA_EPS) >> 1)) grpData.scaleFactors[s + m_numSwbShort * gr] = 0;
-                }
-              }
-
-              memset (&grpData.scaleFactors[maxSfbCh + m_numSwbShort * gr], 0, (numSwbFrame - maxSfbCh) * sizeof (uint8_t));
-            }
-            grpData.sfbsPerGroup = coreConfig.icsInfoCurr[ch].maxSfb = __max (maxSfbCh, numSwbFrame);
-          }
-          if (ch > 0 && coreConfig.commonWindow) // resynchronize the two max_sfb for stereo
-          {
-            uint8_t& maxSfb0 = coreConfig.icsInfoCurr[0].maxSfb;
-            uint8_t& maxSfb1 = coreConfig.icsInfoCurr[1].maxSfb;
-
-            if (coreConfig.stereoMode > 0)
-            {
-              maxSfb0 = maxSfb1 = coreConfig.groupingData[0].sfbsPerGroup = grpData.sfbsPerGroup = __max (maxSfb0, maxSfb1);
-            }
-            coreConfig.commonMaxSfb = (maxSfb0 == maxSfb1);
-          }
-        }
-        else if (m_noiseFilling[el] && (m_bitRateMode == 0) && (m_numElements == 1) && (samplingRate < 27713))
-        {
-          for (s = 0; s < 26; s++) m_sfbLoudMem[ch][s][m_frameCount & 31] = BA_EPS;
-        }
+					if ((maxSfbCh > 0) && m_noiseFilling[el] && (m_shiftValSBR > 0 || m_bitRateMode <= 3 || !eightShorts))
+					{
+						const uint32_t maxSfbCurr = (eightShorts ? (useMaxBandwidth ? __min (15, 17 - (samplingRate >> 13) + (samplingRate >> 15))
+																	: brModeAndFsToMaxSfbShort (m_bitRateMode, samplingRate)) : maxSfbLong);
+						const bool keepMaxSfbCurr = ((samplingRate < 37566) || (samplingRate >= 46009 && samplingRate < 55426 && eightShorts));
+						const uint8_t numSwbFrame = __min ((numSwbCh * ((maxSfbCh == maxSfbCurr) || (m_bitRateMode <= 2) || (m_shiftValSBR > 0) ? 4u : 3u)) >> 2,
+														   maxSfbCurr + (m_bitRateMode < 2 || (m_bitRateMode >> 2) == 1 || keepMaxSfbCurr ? 0u : 1u));
+						
+						if ((m_bitRateMode == 0) && (m_numElements == 1) && (samplingRate < 27713) && eightShorts)
+						{
+							for (s = 0; s < 26; s++) m_sfbLoudMem[ch][s][m_frameCount & 31] = uint16_t (sqrt ((double) getThr (ch, s)));
+						}
+						if ((maxSfbCh < numSwbFrame) || (m_bitRateMode <= 2)) // increase coding bandwidth
+						{
+							for (uint16_t gr = 0; gr < grpData.numWindowGroups; gr++)
+							{
+								const uint32_t*  grpRms = &grpData.sfbRmsValues[m_numSwbShort * gr];
+								
+								if ((m_bitRateMode == 0) && (m_numElements == 1) && (samplingRate < 27713))
+								{
+									const uint32_t*  refRms = &coreConfig.groupingData[1 - ch].sfbRmsValues[m_numSwbShort * gr];
+									uint8_t*  grpStereoData = &coreConfig.stereoDataCurr[m_numSwbShort * gr];
+									const unsigned sfbStart = __max (samplingRate < 18783 ? 17 : 24, m_specGapFiller.getFirstGapFillSfb ());
+									
+									for (s = sfbStart; s < maxSfbCh; s++)
+									{
+										const double rmsValue = double (grpStereoData[s] > 0 ? (grpRms[s] + (uint64_t) refRms[s] + 1) >> 1 : grpRms[s]);
+										const unsigned sfbIdx = s - sfbStart;
+										
+										m_sfbLoudMem[ch][sfbIdx][m_frameCount & 31] = __max (BA_EPS, uint16_t (sqrt (rmsValue)));
+										if (grpRms[s] < (getThr (ch, sfbIdx) >> (samplingRate >> 13))) grpData.scaleFactors[s + m_numSwbShort * gr] = 0;
+									}
+								}
+								else if ((m_bitRateMode <= 4) && (meanSpecFlat[ci] <= (SCHAR_MAX >> 1))) // lo
+								{
+									for (s = __max (samplingRate < 27713 ? (samplingRate < 18783 ? 17 : 24) : 22, m_specGapFiller.getFirstGapFillSfb ()); s < maxSfbCh; s++)
+									{
+										if (grpRms[s] < ((3 * TA_EPS) >> 1)) grpData.scaleFactors[s + m_numSwbShort * gr] = 0;
+									}
+								}
+								
+								memset (&grpData.scaleFactors[maxSfbCh + m_numSwbShort * gr], 0, (numSwbFrame - maxSfbCh) * sizeof (uint8_t));
+							}
+							grpData.sfbsPerGroup = coreConfig.icsInfoCurr[ch].maxSfb = __max (maxSfbCh, numSwbFrame);
+						}
+						if (ch > 0 && coreConfig.commonWindow) // resynchronize the two max_sfb for stereo
+						{
+							uint8_t& maxSfb0 = coreConfig.icsInfoCurr[0].maxSfb;
+							uint8_t& maxSfb1 = coreConfig.icsInfoCurr[1].maxSfb;
+							
+							if (coreConfig.stereoMode > 0)
+							{
+								maxSfb0 = maxSfb1 = coreConfig.groupingData[0].sfbsPerGroup = grpData.sfbsPerGroup = __max (maxSfb0, maxSfb1);
+							}
+							coreConfig.commonMaxSfb = (maxSfb0 == maxSfb1);
+						}
+					}
+					else if (m_noiseFilling[el] && (m_bitRateMode == 0) && (m_numElements == 1) && (samplingRate < 27713))
+					{
+						for (s = 0; s < 26; s++) m_sfbLoudMem[ch][s][m_frameCount & 31] = BA_EPS;
+					}
 #endif
-        ci++;
-      } // for ch
-
-      for (unsigned ch = 0; ch < nrChannels; ch++) // channel loop
-      {
-        SfbGroupData& grpData = coreConfig.groupingData[ch];
-        TnsData&      tnsData = coreConfig.tnsData[ch];
-
-        if (tnsData.numFilters[0] + tnsData.numFilters[1] + tnsData.numFilters[2] > 0)
-        {
-          s = tnsData.firstTnsWindow = 0; // store length-1 group map for bit-stream writing
-          for (uint16_t gr = 0; gr < grpData.numWindowGroups; s += grpData.windowGroupLength[gr++])
-          {
-            if (grpData.windowGroupLength[gr] == 1) tnsData.firstTnsWindow |= (1u << s);
-          }
-        }
-      } // for ch
-    }
-  } // for el
-
-  return errorValue;
-}
+					ci++;
+				} // for ch
+				
+				for (unsigned ch = 0; ch < nrChannels; ch++) // channel loop
+				{
+					SfbGroupData& grpData = coreConfig.groupingData[ch];
+					TnsData&      tnsData = coreConfig.tnsData[ch];
+					
+					if (tnsData.numFilters[0] + tnsData.numFilters[1] + tnsData.numFilters[2] > 0)
+					{
+						s = tnsData.firstTnsWindow = 0; // store length-1 group map for bit-stream writing
+						for (uint16_t gr = 0; gr < grpData.numWindowGroups; s += grpData.windowGroupLength[gr++])
+						{
+							if (grpData.windowGroupLength[gr] == 1) tnsData.firstTnsWindow |= (1u << s);
+						}
+					}
+				} // for ch
+			}
+		} // for el
+		
+		return errorValue;
+	}
 
 unsigned ExhaleEncoder::quantizationCoding ()  // apply MDCT quantization and entropy coding
 {
@@ -1532,46 +1567,51 @@ unsigned ExhaleEncoder::quantizationCoding ()  // apply MDCT quantization and en
           
 		  //3. Modify SBR Processing in quantizationCoding()
 		  // Find the existing getSbrEnvelopeAndNoise call and wrap it:
-		  if (m_sibilantDetected[ci] && m_shiftValSBR > 0) {
-			  // SIBILANT SBR PROCESSING
-			  const uint8_t originalMsf = msfVal;
-			  
-			  // Force more noise-like treatment for sibilants
-			  msfVal = __max(msfVal, 30);  // Higher = more noise-like
-			  
-			  // Get finer temporal resolution for better sibilant reconstruction
-			  uint8_t adjustedTempFlat = (__max(m_meanTempPrev[ci], meanTempFlat[ci]) >> 3) / 4;
-			  adjustedTempFlat = __max(adjustedTempFlat, 1);  // Minimum value
-			  
-			 // printf("*** SBR SIBILANT: CH%u, msfVal %u->%u ***\n", ci, originalMsf, msfVal);
-			  
-			  
-			  // ✅ CORRECTED parameter order
-			  m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (
-															  &m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame], // sbrLevels
-															  msfVal,              // specFlat5b (MODIFIED for sibilants)
-															  adjustedTempFlat,    // tempFlat5b (MODIFIED for sibilants)
-															  m_bitRateMode == 0,  // lr (boolean)
-															  m_indepFlag,         // ind (boolean)
-															  msfSte,              // specFlatSte
-															  tmpValSynch,         // tmpValSte
-															  nSamplesInFrame,     // frameSize
-															  &m_coreSignals[ci][1] // sbrData
-															  );
-		  } else {
-			  // NORMAL SBR PROCESSING (original call)
-			  m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (
-															  &m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame],
-															  msfVal,
-															  __max (m_meanTempPrev[ci], meanTempFlat[ci]) >> 3,
-															  m_bitRateMode == 0,
-															  m_indepFlag,
-															  msfSte,
-															  tmpValSynch,
-															  nSamplesInFrame,
-															  &m_coreSignals[ci][1]
-															  );
+		  
+		  // ✅ INSERT THIS NEW UNIFIED BLOCK ✅
+		  
+		  // --- START: UNIFIED SIBILANCE AND PRE-ECHO HANDLING ---
+		  // This new approach influences the INPUTS to the SBR generator
+		  // instead of modifying its output, preventing data corruption.
+		  
+		  // 1. Set base SBR parameters from the current frame's state.
+		  uint8_t finalMsfVal = msfVal;
+		  uint8_t finalTempFlat = __max(m_meanTempPrev[ci], meanTempFlat[ci]) >> 3;
+		  
+		  // 2. Check for Pre-Echo Risk using lookahead data.
+		  // A stable/tonal frame (high temporal flatness) followed by a transient is a pre-echo risk.
+		  const unsigned tfCurr = (m_tempAnaCurr[ci] >> 16) & UCHAR_MAX;
+		  if (m_sbrPeControlActive && !shortWinPrev && m_tranLocNext[ci] != -1 && tfCurr > 180)
+		  {
+			  // To prevent pre-echo, make the *current* frame's SBR more noise-like
+			  // and give it finer temporal resolution (more envelopes).
+			  finalMsfVal = __max(finalMsfVal, 30);      // Higher value = more noise-like.
+			  finalTempFlat = __max(1, finalTempFlat / 2); // Lower value = more envelopes.
 		  }
+		  
+		  // 3. Check for Sibilance, which requires similar but more aggressive treatment.
+		  if (m_sibilantDetected[ci] && m_shiftValSBR > 0)
+		  {
+			  // Force noise-like reconstruction and maximum temporal detail.
+			  finalMsfVal = __max(finalMsfVal, 30);
+			  finalTempFlat = __max(1, finalTempFlat / 4); // Sibilance needs even finer resolution.
+		  }
+		  
+		  // 4. Call the SBR generator ONCE with the final, safe, and adjusted parameters.
+		  m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (
+														  &m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame],
+														  finalMsfVal,
+														  finalTempFlat,
+														  m_bitRateMode == 0,
+														  m_indepFlag,
+														  msfSte,
+														  tmpValSynch,
+														  nSamplesInFrame,
+														  &m_coreSignals[ci][1]
+														  );
+
+		  
+		  // --- END: SBR PRE-ECHO CONTROL (REVISED LOGIC) ---
 
 		  if (ch + 1 == nrChannels) // update the flatness histories
         {
@@ -2183,6 +2223,11 @@ ExhaleEncoder::ExhaleEncoder (int32_t* const inputPcmData,           unsigned ch
     m_targetBandwidth = 0; // ADD THIS LINE to initialize the new variable
 //initialize sibilant detector
 	memset(m_sibilantDetected, false, sizeof(m_sibilantDetected));
+
+	// --- ADD THESE LINES FOR INITIALIZATION OF SBR preecho---
+	m_sbrPeControlActive = true; // Enable the feature by default
+	memset(m_prevSbrEnvelope, 0, sizeof(m_prevSbrEnvelope));
+	// --- END OF ADDED LINES ---
 
 
   // initialize all helper structs
