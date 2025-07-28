@@ -278,7 +278,7 @@ unsigned BitAllocator::initSfbStepSizes (const SfbGroupData* const groupData[USA
                                          const unsigned lfeChannelIndex, const unsigned ad /*= 0u*/, const bool tnsDisabled /*= false*/, const long bitrate /*= 64000*/, const uint8_t bitRateMode /*= 0*/)
 {
       // ADD: Initialize the Minimum SNR model
-      initMinSnr(nChannels, samplingRate, bitrate, bitRateMode, groupData);
+      // remove snr initMinSnr(nChannels, samplingRate, bitrate, bitRateMode, groupData);
 
       // equal-loudness weighting based on data from: K. Kurakata, T. Mizunami, and K. Matsushita, "Percentiles
       // of Normal Hearing-Threshold Distribution Under Free-Field Listening Conditions in Numerical Form," Ac.
@@ -520,130 +520,171 @@ unsigned BitAllocator::initSfbStepSizes (const SfbGroupData* const groupData[USA
     unsigned BitAllocator::imprSfbStepSizes (const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS], const uint8_t numSwbShort,
                                              const int32_t* const mdctSpec[USAC_MAX_NUM_CHANNELS], const unsigned nSamplesInFrame,
                                              const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,
-                                             const unsigned firstChannelIndex, const uint8_t* const sfm, const bool commonWindow,
-                                             const uint8_t* const sfbStereoData /*= nullptr*/, const uint8_t stereoConfig /*= 0*/)
-    {
-      const uint8_t maxSfbL16k = 16 + __min (4 + (samplingRate >> 10), (9 << 17) / __max (1, samplingRate)); // SFB index at 15.8 kHz
-      const uint32_t redFactor = __max ((samplingRate < 25495 ? 2 : 1), __min (3, m_rateIndex)) - (stereoConfig >> 3);
-      const uint32_t redWeight = __min (4, 9 - __min (9, m_rateIndex));
-      short* const  tempCoeffs = (short* const) m_tempSfbValue;
+                                             const unsigned firstChannelIndex, const uint8_t* const sfm, bool* sibilantDetected, const bool commonWindow,
+                                             const uint8_t* const sfbStereoData , const uint8_t stereoConfig )
+{
+		//unsigned sibilantBandCount = 0;
+		const uint8_t maxSfbL16k = 16 + __min (4 + (samplingRate >> 10), (9 << 17) / __max (1, samplingRate)); // SFB index at 15.8 kHz
+		const uint32_t redFactor = __max ((samplingRate < 25495 ? 2 : 1), __min (3, m_rateIndex)) - (stereoConfig >> 3);
+		const uint32_t redWeight = __min (4, 9 - __min (9, m_rateIndex));
+		short* const  tempCoeffs = (short* const) m_tempSfbValue;
+		
+		// ADD: Enforce minimum SNR floor from aac model
+		//if (m_sfbMinSnr[ch][b] > 0) {
+		// Calculate the maximum allowed step size to maintain the minimum SNR
+		//uint32_t minSnrLim = (uint32_t)((double)grpRms[b] / m_sfbMinSnr[ch][b]);
+		// The step size should not be larger than this limit
+		//grpStepSizes[b] = __min(grpStepSizes[b], minSnrLim);
+		//}
+		
+		
+		if ((groupData == nullptr) || (mdctSpec == nullptr) || (sfbStepSizes == nullptr) || (sfm == nullptr) || (nSamplesInFrame > 2048) ||
+			(numSwbShort < MIN_NUM_SWB_SHORT) || (numSwbShort > MAX_NUM_SWB_SHORT) || (nChannels > USAC_MAX_NUM_CHANNELS) ||
+			(samplingRate < 7350) || (samplingRate > 96000) || (firstChannelIndex > USAC_MAX_NUM_CHANNELS))
+		{
+			return 1; // invalid arguments error
+		}
+		
+		for (unsigned ch = firstChannelIndex; ch < firstChannelIndex + nChannels; ch++)
+		{
+			// ADD: Sibilant counter for THIS channel
+			unsigned sibilantBandCount = 0;
+			
+			const SfbGroupData& grpData = *groupData[ch];
+			const uint32_t maxSfbInCh = __min (MAX_NUM_SWB_LONG, grpData.sfbsPerGroup);
+			const bool    eightShorts = (grpData.numWindowGroups != 1);
+			const bool  lowRateTuning = (m_rateIndex == 0) && (samplingRate >= 25495 && sfm[ch] <= (SCHAR_MAX >> 1));
+			const bool undercodingRed = (m_rateIndex >  0) || (samplingRate >= 25495 && sfm[ch] * 8 > UCHAR_MAX * 7) || lowRateTuning;
+			const uint32_t* rms = grpData.sfbRmsValues;
+			uint32_t* stepSizes = &sfbStepSizes[ch * numSwbShort * NUM_WINDOW_GROUPS];
+			
+			if ((grpData.numWindowGroups * maxSfbInCh == 0) || (grpData.numWindowGroups > NUM_WINDOW_GROUPS))
+			{
+				continue;
+			}
+			for (unsigned gr = 0; gr < grpData.numWindowGroups; gr++)
+			{
+				const uint16_t* grpOff = &grpData.sfbOffsets[numSwbShort * gr];
+				const uint8_t* grpSte = (sfbStereoData == nullptr ? nullptr : &sfbStereoData[numSwbShort * gr]);
+				const uint32_t* grpRms = &rms[numSwbShort * gr];
+				const uint32_t* refRms = &groupData[firstChannelIndex + nChannels - 1 - ch]->sfbRmsValues[numSwbShort * gr];
+				uint32_t* grpStepSizes = &stepSizes[numSwbShort * gr];
+				uint32_t  b, grpRmsMin = INT_MAX; // min. RMS value, used for overcoding reduction
+				uint64_t  s = (eightShorts ? (nSamplesInFrame * grpData.windowGroupLength[gr]) >> 1 : nSamplesInFrame << 2);
+				
+				memset (m_tempSfbValue, UCHAR_MAX, maxSfbInCh * sizeof (uint8_t));
+				if (lowRateTuning && (maxSfbInCh > 0) && !eightShorts)
+				{
+					uint32_t numRedBands = nSamplesInFrame; // final result lies between 1/4 and 1/2
+					
+					if ((nChannels == 2) && commonWindow && (grpSte != nullptr))
+					{
+						for (b = 0; b < maxSfbInCh; b++) if (grpSte[b] == 0) numRedBands += grpOff[b + 1] - grpOff[b];
+					}
+					b = MAX_NUM_SWB_LONG - ((numRedBands * ((SCHAR_MAX >> 1) + 1 - sfm[ch]) + (1 << 11)) >> 12);
+					
+					while ((b < maxSfbInCh) && (grpRms[b] > grpRms[b - 1])) b++; // start after peak
+					
+					for (b += ((nChannels == 2) && commonWindow ? b & 1 : 0); b < maxSfbInCh; b++)
+					{
+						grpStepSizes[b] = __max (grpStepSizes[b], grpRms[b] >= (UINT_MAX >> 1) ? UINT_MAX : (grpRms[b] + 1) << 1);
+					}
+				}
+				
+				// undercoding reduction for case where large number of coefs is quantized to zero
+				for (b = 0; b < maxSfbInCh; b++)
+				{
+					const uint32_t rmsComp = (grpSte != nullptr && grpSte[b] > 0 ? squareMeanRoot (refRms[b], grpRms[b]) : grpRms[b]);
+					const uint32_t rmsRef9 = (commonWindow ? refRms[b] >> 9 : rmsComp);
+					const uint8_t sfbWidth = grpOff[b + 1] - grpOff[b];
+					
+					if (redWeight > 0 && !eightShorts && sfbWidth > (samplingRate >= 18783 ? 8 : 12)) // transient SFBs
+					{
+						const uint32_t gains = m_tnsPredictor->calcParCorCoeffs (&mdctSpec[ch][grpOff[b]], sfbWidth, MAX_PREDICTION_ORDER, tempCoeffs) >> 24;
+						
+						m_tempSfbValue[b] = UCHAR_MAX - uint8_t ((512u + gains * gains * redWeight) >> (10 + (sfbWidth > 16 ? 0 : (20 - sfbWidth) >> 2)));
+						if ((b >= 2) && (m_tempSfbValue[b - 1] < m_tempSfbValue[b]) && (m_tempSfbValue[b - 1] < m_tempSfbValue[b - 2]))
+						{
+							m_tempSfbValue[b - 1] = __min (m_tempSfbValue[b], m_tempSfbValue[b - 2]); // remove local peaks
+						}
+					}
+					if (grpRms[b] < grpRmsMin) grpRmsMin = grpRms[b];
+					
+					if (undercodingRed && (rmsComp >= rmsRef9) && (rmsComp < (grpStepSizes[b] >> 1))) // zero-quantized
+					{
+						s -= (sfbWidth * redFactor * __min (1u << 11, rmsComp) + (1u << 10)) >> 11;
+					}
+				}
+				
+				if ((samplingRate >= 27713) && (b < maxSfbL16k) && !eightShorts) // zeroed HF data
+				{
+					const uint32_t rmsComp = (grpSte != nullptr && grpSte[b] > 0 ? squareMeanRoot (refRms[b], grpRms[b]) : grpRms[b]);
+					const uint32_t rmsRef9 = (commonWindow ? refRms[b] >> 9 : rmsComp);
+					const uint8_t sfbWidth = grpOff[maxSfbL16k] - grpOff[b];
+					
+					if (undercodingRed && (rmsComp >= rmsRef9)) // check only first SFB above max_sfb as simplification
+					{
+						s -= (sfbWidth * redFactor * __min (1u << 11, rmsComp) + (1u << 10)) >> 11;
+					}
+				}
+				s = (eightShorts ? s / ((nSamplesInFrame * grpData.windowGroupLength[gr]) >> 8) : s / (nSamplesInFrame >> 5));
+				
+				if (redWeight > 0 && !eightShorts) memset (tempCoeffs /*= m_tempSfbValue*/, UCHAR_MAX, MAX_PREDICTION_ORDER * sizeof (short));
+				
+				for (b = 0; b < maxSfbInCh; b++) // improve step-sizes by limiting and attenuation
+				{
+					grpStepSizes[b] = uint32_t ((__max (grpRmsMin, grpStepSizes[b]) * s * (m_tempSfbValue[b] + 1u) + (1u << 14)) >> 15);
+					if (grpStepSizes[b] <= (grpRms[b] >> 11)) grpStepSizes[b] = __max (BA_EPS, grpRms[b] >> 11);
+					
+					//sfb loop detector
+					// ADD: Sibilant detection and protection
+					if (detectSibilantInSpeech(mdctSpec[ch], grpOff, b, samplingRate, sfm[ch]) && !eightShorts) {
+						// Allocate 20% more bits for sibilants (reduce step size)
+						//grpStepSizes[b] = (grpStepSizes[b] * 80) / 100;
+						grpStepSizes[b] = (grpStepSizes[b] * 85) / 100;  // 15% more bits instead of 30%
+						sibilantBandCount++;  // ADD: Count sibilant bands
+					}
+					
+					//SNR protection
+					if (lowRateTuning) // clip near-0 SNRs to minimum SNR
+					{
+						uint32_t lim = uint32_t ((grpRms[b] * (8192u - (uint64_t) sfm[ch] * sfm[ch]) + (1u << 12)) >> 13);
+						
+						// ADD: Enforce minimum SNR floor from libaaccrop model
+						//if (m_sfbMinSnr[ch][b] > 0) {
+						// Calculate the maximum allowed step size to maintain the minimum SNR
+						//uint32_t minSnrLim = (uint32_t)((double)grpRms[b] / m_sfbMinSnr[ch][b]);
+						// The step size should not be larger than this limit
+						//grpStepSizes[b] = __min(grpStepSizes[b], minSnrLim);
+						//}
+						
+						if ((grpStepSizes[b] > grpRms[b]) && ((grpStepSizes[b] >> 1) <= lim)) grpStepSizes[b] = grpRms[b];
+					}
+				}
+				
+				
+				
+			}
+			
+			// ADD: Set flag for THIS channel after processing it
+			if (sibilantDetected != nullptr) {
+				sibilantDetected[ch - firstChannelIndex] = (sibilantBandCount >= 2);}
+				
+			} // for ch
+			
+			//  SET THE FLAG:
+			//*sibilantDetected = (sibilantBandCount >= 2);
+			
+			//  CORRECT: Set via pointer parameter
+			//if (sibilantDetected != nullptr) {
+			//*sibilantDetected = (sibilantBandCount >= 2);
+			//}
+			
+			
+			return 0; // no error
+			
+		}
 
-      if ((groupData == nullptr) || (mdctSpec == nullptr) || (sfbStepSizes == nullptr) || (sfm == nullptr) || (nSamplesInFrame > 2048) ||
-          (numSwbShort < MIN_NUM_SWB_SHORT) || (numSwbShort > MAX_NUM_SWB_SHORT) || (nChannels > USAC_MAX_NUM_CHANNELS) ||
-          (samplingRate < 7350) || (samplingRate > 96000) || (firstChannelIndex > USAC_MAX_NUM_CHANNELS))
-      {
-        return 1; // invalid arguments error
-      }
-
-      for (unsigned ch = firstChannelIndex; ch < firstChannelIndex + nChannels; ch++)
-      {
-        const SfbGroupData& grpData = *groupData[ch];
-        const uint32_t maxSfbInCh = __min (MAX_NUM_SWB_LONG, grpData.sfbsPerGroup);
-        const bool    eightShorts = (grpData.numWindowGroups != 1);
-        const bool  lowRateTuning = (m_rateIndex == 0) && (samplingRate >= 25495 && sfm[ch] <= (SCHAR_MAX >> 1));
-        const bool undercodingRed = (m_rateIndex >  0) || (samplingRate >= 25495 && sfm[ch] * 8 > UCHAR_MAX * 7) || lowRateTuning;
-        const uint32_t* rms = grpData.sfbRmsValues;
-        uint32_t* stepSizes = &sfbStepSizes[ch * numSwbShort * NUM_WINDOW_GROUPS];
-
-        if ((grpData.numWindowGroups * maxSfbInCh == 0) || (grpData.numWindowGroups > NUM_WINDOW_GROUPS))
-        {
-          continue;
-        }
-        for (unsigned gr = 0; gr < grpData.numWindowGroups; gr++)
-        {
-          const uint16_t* grpOff = &grpData.sfbOffsets[numSwbShort * gr];
-          const uint8_t* grpSte = (sfbStereoData == nullptr ? nullptr : &sfbStereoData[numSwbShort * gr]);
-          const uint32_t* grpRms = &rms[numSwbShort * gr];
-          const uint32_t* refRms = &groupData[firstChannelIndex + nChannels - 1 - ch]->sfbRmsValues[numSwbShort * gr];
-          uint32_t* grpStepSizes = &stepSizes[numSwbShort * gr];
-          uint32_t  b, grpRmsMin = INT_MAX; // min. RMS value, used for overcoding reduction
-          uint64_t  s = (eightShorts ? (nSamplesInFrame * grpData.windowGroupLength[gr]) >> 1 : nSamplesInFrame << 2);
-
-          memset (m_tempSfbValue, UCHAR_MAX, maxSfbInCh * sizeof (uint8_t));
-          if (lowRateTuning && (maxSfbInCh > 0) && !eightShorts)
-          {
-            uint32_t numRedBands = nSamplesInFrame; // final result lies between 1/4 and 1/2
-
-            if ((nChannels == 2) && commonWindow && (grpSte != nullptr))
-            {
-              for (b = 0; b < maxSfbInCh; b++) if (grpSte[b] == 0) numRedBands += grpOff[b + 1] - grpOff[b];
-            }
-            b = MAX_NUM_SWB_LONG - ((numRedBands * ((SCHAR_MAX >> 1) + 1 - sfm[ch]) + (1 << 11)) >> 12);
-
-            while ((b < maxSfbInCh) && (grpRms[b] > grpRms[b - 1])) b++; // start after peak
-
-            for (b += ((nChannels == 2) && commonWindow ? b & 1 : 0); b < maxSfbInCh; b++)
-            {
-              grpStepSizes[b] = __max (grpStepSizes[b], grpRms[b] >= (UINT_MAX >> 1) ? UINT_MAX : (grpRms[b] + 1) << 1);
-            }
-          }
-
-          // undercoding reduction for case where large number of coefs is quantized to zero
-          for (b = 0; b < maxSfbInCh; b++)
-          {
-            const uint32_t rmsComp = (grpSte != nullptr && grpSte[b] > 0 ? squareMeanRoot (refRms[b], grpRms[b]) : grpRms[b]);
-            const uint32_t rmsRef9 = (commonWindow ? refRms[b] >> 9 : rmsComp);
-            const uint8_t sfbWidth = grpOff[b + 1] - grpOff[b];
-
-            if (redWeight > 0 && !eightShorts && sfbWidth > (samplingRate >= 18783 ? 8 : 12)) // transient SFBs
-            {
-              const uint32_t gains = m_tnsPredictor->calcParCorCoeffs (&mdctSpec[ch][grpOff[b]], sfbWidth, MAX_PREDICTION_ORDER, tempCoeffs) >> 24;
-
-              m_tempSfbValue[b] = UCHAR_MAX - uint8_t ((512u + gains * gains * redWeight) >> (10 + (sfbWidth > 16 ? 0 : (20 - sfbWidth) >> 2)));
-              if ((b >= 2) && (m_tempSfbValue[b - 1] < m_tempSfbValue[b]) && (m_tempSfbValue[b - 1] < m_tempSfbValue[b - 2]))
-              {
-                m_tempSfbValue[b - 1] = __min (m_tempSfbValue[b], m_tempSfbValue[b - 2]); // remove local peaks
-              }
-            }
-            if (grpRms[b] < grpRmsMin) grpRmsMin = grpRms[b];
-
-            if (undercodingRed && (rmsComp >= rmsRef9) && (rmsComp < (grpStepSizes[b] >> 1))) // zero-quantized
-            {
-              s -= (sfbWidth * redFactor * __min (1u << 11, rmsComp) + (1u << 10)) >> 11;
-            }
-          }
-
-          if ((samplingRate >= 27713) && (b < maxSfbL16k) && !eightShorts) // zeroed HF data
-          {
-            const uint32_t rmsComp = (grpSte != nullptr && grpSte[b] > 0 ? squareMeanRoot (refRms[b], grpRms[b]) : grpRms[b]);
-            const uint32_t rmsRef9 = (commonWindow ? refRms[b] >> 9 : rmsComp);
-            const uint8_t sfbWidth = grpOff[maxSfbL16k] - grpOff[b];
-
-            if (undercodingRed && (rmsComp >= rmsRef9)) // check only first SFB above max_sfb as simplification
-            {
-              s -= (sfbWidth * redFactor * __min (1u << 11, rmsComp) + (1u << 10)) >> 11;
-            }
-          }
-          s = (eightShorts ? s / ((nSamplesInFrame * grpData.windowGroupLength[gr]) >> 8) : s / (nSamplesInFrame >> 5));
-
-          if (redWeight > 0 && !eightShorts) memset (tempCoeffs /*= m_tempSfbValue*/, UCHAR_MAX, MAX_PREDICTION_ORDER * sizeof (short));
-
-          for (b = 0; b < maxSfbInCh; b++) // improve step-sizes by limiting and attenuation
-          {
-            grpStepSizes[b] = uint32_t ((__max (grpRmsMin, grpStepSizes[b]) * s * (m_tempSfbValue[b] + 1u) + (1u << 14)) >> 15);
-            if (grpStepSizes[b] <= (grpRms[b] >> 11)) grpStepSizes[b] = __max (BA_EPS, grpRms[b] >> 11);
-
-            if (lowRateTuning) // clip near-0 SNRs to minimum SNR
-            {
-              uint32_t lim = uint32_t ((grpRms[b] * (8192u - (uint64_t) sfm[ch] * sfm[ch]) + (1u << 12)) >> 13);
-
-              // ADD: Enforce minimum SNR floor from libaaccrop model
-              if (m_sfbMinSnr[ch][b] > 0) {
-                  // Calculate the maximum allowed step size to maintain the minimum SNR
-                  uint32_t minSnrLim = (uint32_t)((double)grpRms[b] / m_sfbMinSnr[ch][b]);
-                  // The step size should not be larger than this limit
-                  grpStepSizes[b] = __min(grpStepSizes[b], minSnrLim);
-              }
-
-              if ((grpStepSizes[b] > grpRms[b]) && ((grpStepSizes[b] >> 1) <= lim)) grpStepSizes[b] = grpRms[b];
-            }
-          }
-        }
-      } // for ch
-
-      return 0; // no error
-        
-    }
 
     // Estimate tonality of a scale factor band (0 = noise-like, 1 = tonal)
     float BitAllocator::estimateTonality(const int32_t* mdctSpec,
@@ -702,3 +743,23 @@ unsigned BitAllocator::initSfbStepSizes (const SfbGroupData* const groupData[USA
       
       return tonality;
     }
+
+// Add this function implementation to bitAllocation.cpp
+bool BitAllocator::detectSibilantInSpeech(const int32_t* mdctSpec, const uint16_t* sfbOffsets,
+										  unsigned sfb, unsigned samplingRate, uint8_t spectralFlatness) {
+	// Convert SFB to frequency range
+	unsigned startHz = (sfbOffsets[sfb] * samplingRate) / 2048;  // Assuming 1024 MDCT
+	unsigned endHz = (sfbOffsets[sfb + 1] * samplingRate) / 2048;
+	
+	// Sibilant frequency range: 4-10kHz (male) or 4-12kHz (female)
+	bool inSibilantRange = (startHz >= 5000) && (endHz <= 10000);
+	
+	// High spectral flatness = noise-like
+	//bool noiselike = spectralFlatness > (SCHAR_MAX * 7 / 10);  // > 0.7 threshold
+	bool noiselike = spectralFlatness > (SCHAR_MAX  * 3 / 4);  // > 0.5 instead of 0.7
+
+	// Only activate for higher bitrate presets (0-2)
+	bool highQualityMode = (m_rateIndex <= 1);
+	
+	return highQualityMode && inSibilantRange && noiselike;
+}

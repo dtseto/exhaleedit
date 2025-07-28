@@ -692,13 +692,15 @@ unsigned ExhaleEncoder::psychBitAllocation () // perceptual bit-allocation via s
     // ==========================================================================================
     // CHANGE 2: Add the simple bitrate compensation factor.
     // ==========================================================================================
-    double bandwidthCompFactor = 1.0;
-    if (m_targetBandwidth > 0 && m_numSwbLong > maxSfbLong)
-    {
+	const double bandwidthCompFactor = 1.0; // Disabled
+	//disable dynamic bandwidth below
+    //double bandwidthCompFactor = 1.0;
+    //if (m_targetBandwidth > 0 && m_numSwbLong > maxSfbLong)
+    //{
         // Calculate how much of the spectrum was cut off and create a factor to compensate.
         // We use sqrt to make the compensation less aggressive than a linear 1:1 ratio.
-        bandwidthCompFactor = sqrt((double)m_numSwbLong / __max(1, maxSfbLong));
-    }
+        //bandwidthCompFactor = sqrt((double)m_numSwbLong / __max(1, maxSfbLong));
+    //}
 
    // const uint16_t scaleSBR        = (m_shiftValSBR > 0 || m_nonMpegExt ? sbrRateOffset[m_bitRateMode] : 0); // -25% rate
    // const uint64_t scaleSr         = (samplingRate < 27713 ? (samplingRate < 23004 ? 32 : 34) - __min (3 << m_shiftValSBR, m_bitRateMode)
@@ -725,189 +727,101 @@ unsigned ExhaleEncoder::psychBitAllocation () // perceptual bit-allocation via s
   errorValue |= m_bitAllocator.initSfbStepSizes (m_scaleFacData, m_numSwbShort, m_specAnaCurr, m_tempAnaCurr,
                                                  nChannels, samplingRate, sfbStepSizes, lfeChannelIndex, 5 - 5 * ((SFB_QUANT_PERCEPT_OPT + 1) / 2), m_bitRateMode);
 
+	// ==========================================================================================
+	// FIXED: Research-based tonality adjustment (8-15%) + Better safety check
+	// ==========================================================================================
     // ADD THIS SECTION: Apply tonality-based adjustment to initial step sizes
     // This happens AFTER initial psychoacoustic calculation but BEFORE rate control
-    for (unsigned ch = 0; ch < nChannels; ch++)
-    {
-      if (ch == lfeChannelIndex) continue; // Skip LFE channel
-      
-      const SfbGroupData& grpData = m_scaleFacData[ch][0];
-      const bool eightShorts = (grpData.numWindowGroups > 1);
-      const unsigned numSfb = (eightShorts ? m_numSwbShort : m_numSwbLong);
-      
-      // Different strategies for different bitrate modes
-      if (m_bitRateMode == 0) // Preset 'a': Special handling for 36 kbit/s
-      {
-        // At very low bitrates, focus on perceptually critical bands
-        for (unsigned sfb = 0; sfb < numSfb; sfb++)
-        {
-          const uint16_t sfbStart = grpData.sfbOffsets[sfb];
-          const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
-          const uint16_t sfbWidth = sfbEnd - sfbStart;
-          
-          if (sfbWidth == 0) continue;
-          
-          // Calculate approximate center frequency of this SFB
-          const float freqHz = (float)(sfbStart + sfbWidth/2) * samplingRate / (2.0f * nSamplesInFrame);
-          
-          // Estimate tonality
-          float tonality = m_bitAllocator.estimateTonality(
-            m_mdctSignals[ch],
-            grpData.sfbOffsets,
-            sfb,
-            sfbWidth
-          );
+	/*
+	for (unsigned ch = 0; ch < nChannels; ch++)
+	{
+		if (ch == lfeChannelIndex) continue; // Skip LFE channel
+		
+		const SfbGroupData& grpData = m_scaleFacData[ch][0];
+		const bool eightShorts = (grpData.numWindowGroups > 1);
+		const unsigned numSfb = (eightShorts ? m_numSwbShort : m_numSwbLong);
+		
+		// VERY conservative scaling: Start small and proven to work
+		// Mode 0: 3%, Mode 9: 6% - much smaller than research optimal but guaranteed safe
+		const float maxAdjustment = 0.03f + 0.003f * __min(9, m_bitRateMode); // 3% to 6%
+		
+		for (unsigned sfb = 0; sfb < numSfb; sfb++)
+		{
+			const uint16_t sfbStart = grpData.sfbOffsets[sfb];
+			const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
+			const uint16_t sfbWidth = sfbEnd - sfbStart;
+			
+			if (sfbWidth == 0) continue;
+			
+			// Estimate tonality
+			float tonality = m_bitAllocator.estimateTonality(
+															 m_mdctSignals[ch],
+															 grpData.sfbOffsets,
+															 sfb,
+															 sfbWidth
+															 );
+			
+			const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+			
+	 */
+	
+			// Use continuous tonality values - no arbitrary thresholds!
+			// tonality = 1.0 (pure tone) → +maxAdjustment% more bits (reduce step size)
+			// tonality = 0.5 (neutral)  → no change
+			// tonality = 0.0 (pure noise) → +maxAdjustment% fewer bits (increase step size)
+		//	float tonalityAdjustment = maxAdjustment * (0.5f - tonality);
+		//	float adjustmentFactor = 1.0f + tonalityAdjustment;
+			
+			// Apply the adjustment
+		//	sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
+			
+			// Ensure step size stays within reasonable bounds
+			//sfbStepSizes[stepIdx] = __max(128u, __min(65536u, sfbStepSizes[stepIdx]));
+		//}
+	//}
 
-        
-        // Adjust step size based on tonality
-        // Index into the linear step size array
-            const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
-            float adjustmentFactor = 1.0f;
-        
-            // Perceptual weighting based on frequency
-            float perceptualWeight = 0.0f;
-
-            if (freqHz >= 800.0f && freqHz <= 3500.0f) {
-              // Critical range for speech/vocals
-              perceptualWeight = 1.0f;
-            } else if (freqHz >= 200.0f && freqHz <= 800.0f) {
-              // Important for warmth and body
-              perceptualWeight = 0.6f;
-            } else if (freqHz >= 3500.0f && freqHz <= 6000.0f) {
-              // Important for clarity
-              perceptualWeight = 0.4f;
-            } else {
-              // Less critical frequencies
-              perceptualWeight = 0.2f;
-            }
-
-            
-            // Only protect highly tonal content in perceptually important bands
-            if (tonality > 0.85f && perceptualWeight > 0.5f) {
-              // Very tonal AND perceptually important: allocate 1.5% more bits
-              adjustmentFactor = 0.985f;
-            }
-            else if (tonality < 0.15f || perceptualWeight < 0.3f) {
-              // Noise-like OR perceptually less important: save 1.5% bits
-              adjustmentFactor = 1.015f;
-            }
-            
-            // Apply the adjustment
-            sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
-          }
-        }
-
-      else if (m_bitRateMode <= 2) // Presets 'b' and 'c': Conservative
-      {
-        // Slightly more aggressive than preset 'a' but still conservative
-        const float maxAdjustment = 0.03f + 0.02f * m_bitRateMode; // 5% to 7%
-        
-        for (unsigned sfb = 0; sfb < numSfb; sfb++)
-        {
-          const uint16_t sfbStart = grpData.sfbOffsets[sfb];
-          const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
-          const uint16_t sfbWidth = sfbEnd - sfbStart;
-          
-          if (sfbWidth == 0) continue;
-          
-          float tonality = m_bitAllocator.estimateTonality(
-            m_mdctSignals[ch],
-            grpData.sfbOffsets,
-            sfb,
-            sfbWidth
-          );
-          
-          const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
-          float adjustmentFactor = 1.0f;
-          
-          if (tonality > 0.8f) {
-            // Very tonal: allocate more bits
-            adjustmentFactor = 1.0f - maxAdjustment * (tonality - 0.8f) / 0.2f;
-          }
-          else if (tonality < 0.2f) {
-            // Very noise-like: allocate fewer bits
-            adjustmentFactor = 1.0f + maxAdjustment * (0.2f - tonality) / 0.2f;
-          }
-          
-          sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
-        }
-      }
-      else // Higher bitrate modes (d-9): Use original aggressive approach
-      {
-        // Progressive adjustment based on bitrate - can be more aggressive
-        const float maxAdjustmentReduction = __min(0.5f, 0.05f + 0.025f * m_bitRateMode); // up to 50% not 30
-        const float maxAdjustmentIncrease = __min(0.5f, 0.05f + 0.025f * m_bitRateMode);  // up to 50% not 30
-        
-        for (unsigned sfb = 0; sfb < numSfb; sfb++)
-        {
-          const uint16_t sfbStart = grpData.sfbOffsets[sfb];
-          const uint16_t sfbEnd = grpData.sfbOffsets[sfb + 1];
-          const uint16_t sfbWidth = sfbEnd - sfbStart;
-          
-          if (sfbWidth == 0) continue;
-          
-          float tonality = m_bitAllocator.estimateTonality(
-            m_mdctSignals[ch],
-            grpData.sfbOffsets,
-            sfb,
-            sfbWidth
-          );
-          
-          const unsigned stepIdx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
-          float adjustmentFactor = 1.0f;
-          
-          if (tonality > 0.7f) {
-            // Tonal content: allocate more bits (reduce step size)
-            adjustmentFactor = 1.0f - maxAdjustmentReduction * (tonality - 0.7f) / 0.3f;
-          }
-          else if (tonality < 0.3f) {
-            // Noise-like: allocate fewer bits (increase step size)
-            adjustmentFactor = 1.0f + maxAdjustmentIncrease * (0.3f - tonality) / 0.3f;
-          }
-          
-          sfbStepSizes[stepIdx] = (uint32_t)(sfbStepSizes[stepIdx] * adjustmentFactor);
-          
-          // Ensure step size stays within reasonable bounds
-          sfbStepSizes[stepIdx] = __max(128u, __min(65536u, sfbStepSizes[stepIdx]));
-        }
-      }
-    }
-    
-    // Add safety check for preset 'a' to prevent bitrate overshoot
-    if (m_bitRateMode == 0)
-    {
-      // Calculate average step size to ensure we're not allocating too many bits
-      uint64_t totalStepSize = 0;
-      unsigned stepCount = 0;
-      
-      for (unsigned ch = 0; ch < nChannels; ch++) {
-        if (ch == lfeChannelIndex) continue;
-        const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
-        for (unsigned sfb = 0; sfb < numSfb; sfb++) {
-          totalStepSize += sfbStepSizes[ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb];
-          stepCount++;
-        }
-      }
-      
-      // If average step size is too low (too many bits), scale everything back
-      if (stepCount > 0) {
-        const uint64_t avgStepSize = totalStepSize / stepCount;
-        const uint64_t minAvgStepSize = 1700; // 2048 Empirical threshold for preset 'a'
-        
-        if (avgStepSize < minAvgStepSize) {
-          const float globalScale = (float)minAvgStepSize / avgStepSize;
-          for (unsigned ch = 0; ch < nChannels; ch++) {
-            if (ch == lfeChannelIndex) continue;
-            const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
-            for (unsigned sfb = 0; sfb < numSfb; sfb++) {
-              const unsigned idx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
-              sfbStepSizes[idx] = (uint32_t)(sfbStepSizes[idx] * globalScale);
-            }
-          }
-        }
-      }
-    }
-    // END OF TONALITY SECTION
+	// Add safety check for ALL bitrate modes to prevent bitrate overshoot
+	// ==========================================================================================
+	// MUCH MORE AGGRESSIVE safety check - guaranteed to prevent overshoot
+	// ==========================================================================================
+	{
+		// Calculate average step size to ensure we're not allocating too many bits
+		uint64_t totalStepSize = 0;
+		unsigned stepCount = 0;
+		
+		for (unsigned ch = 0; ch < nChannels; ch++) {
+			if (ch == lfeChannelIndex) continue;
+			const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
+			for (unsigned sfb = 0; sfb < numSfb; sfb++) {
+				totalStepSize += sfbStepSizes[ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb];
+				stepCount++;
+			}
+		}
+		
+		if (stepCount > 0) {
+			const uint64_t avgStepSize = totalStepSize / stepCount;
+			
+			// MUCH more conservative thresholds - use a high floor to prevent overshoot
+			// All modes stay reasonably high to prevent bitrate explosion
+			const uint64_t minAvgStepSize = __max(1200u, 1700u - (m_bitRateMode * 50u)); // Floor at 1200, gentle slope
+			
+			if (avgStepSize < minAvgStepSize) {
+				const float globalScale = (float)minAvgStepSize / avgStepSize;
+				
+				// Apply global scaling to prevent bitrate overshoot
+				for (unsigned ch = 0; ch < nChannels; ch++) {
+					if (ch == lfeChannelIndex) continue;
+					const unsigned numSfb = (m_scaleFacData[ch][0].numWindowGroups > 1 ? m_numSwbShort : m_numSwbLong);
+					for (unsigned sfb = 0; sfb < numSfb; sfb++) {
+						const unsigned idx = ch * m_numSwbShort * NUM_WINDOW_GROUPS + sfb;
+						sfbStepSizes[idx] = (uint32_t)(sfbStepSizes[idx] * globalScale);
+						// Ensure bounds are still respected after scaling
+						sfbStepSizes[idx] = __max(128u, __min(65536u, sfbStepSizes[idx]));
+					}
+				}
+			}
+		}
+	}    // END OF TONALITY SECTION
 
   // get means of spectral and temporal flatness for every channel
   m_bitAllocator.getChAverageSpecFlat (meanSpecFlat, nChannels);
@@ -1054,12 +968,19 @@ unsigned ExhaleEncoder::psychBitAllocation () // perceptual bit-allocation via s
       }
       else memset (coreConfig.stereoDataCurr, 0, (eightShorts0 || !coreConfig.commonWindow
                                                   ? MAX_NUM_SWB_SHORT * NUM_WINDOW_GROUPS : MAX_NUM_SWB_LONG) * sizeof (uint8_t));
-      errorValue |= m_bitAllocator.imprSfbStepSizes (m_scaleFacData, m_numSwbShort, m_mdctSignals, nSamplesInFrame, nrChannels,
-                                                     ((32 + 5 * m_shiftValSBR) * samplingRate) >> 5, sfbStepSizes, ci, meanSpecFlat,
-                                                     coreConfig.commonWindow, coreConfig.stereoDataCurr, coreConfig.stereoConfig);
+		//  DECLARE: Array for sibilant detection results
+		bool channelSibilantDetected[USAC_MAX_NUM_CHANNELS] = {false};
+		
+		//  CALL: Pass the array to get results for all channels in this element
+		errorValue |= m_bitAllocator.imprSfbStepSizes (m_scaleFacData, m_numSwbShort, m_mdctSignals, nSamplesInFrame, nrChannels,
+													   ((32 + 5 * m_shiftValSBR) * samplingRate) >> 5, sfbStepSizes, ci, meanSpecFlat,
+													   channelSibilantDetected,  // Pass array (before default params)
+													   coreConfig.commonWindow, coreConfig.stereoDataCurr, coreConfig.stereoConfig);
+
 
       for (unsigned ch = 0; ch < nrChannels; ch++) // channel loop
       {
+		  m_sibilantDetected[ci + ch] = channelSibilantDetected[ch];
         SfbGroupData&  grpData = coreConfig.groupingData[ch];
         const bool eightShorts = (coreConfig.icsInfoCurr[ch].windowSequence == EIGHT_SHORT);
         const uint8_t maxSfbCh = grpData.sfbsPerGroup;
@@ -1305,18 +1226,40 @@ unsigned ExhaleEncoder::quantizationCoding ()  // apply MDCT quantization and en
 
     // --- NEW CODE: Inject transient influence on meanTempFlat ---
     // Now using the member variable m_transientDetectedInFrame
-    if (m_transientDetectedInFrame) { // <--- Accessing the member variable directly
-        const uint8_t FORCE_TRANSIENT_TEMP_FLAT = 0; // A very low value to signal transient. Needs tuning.
-        for (unsigned ch_idx_modify = 0; ch_idx_modify < nChannels; ch_idx_modify++) {
+   // if (m_transientDetectedInFrame) { // <--- Accessing the member variable directly
+     //   const uint8_t FORCE_TRANSIENT_TEMP_FLAT = 0; // A very low value to signal transient. Needs tuning.
+//        for (unsigned ch_idx_modify = 0; ch_idx_modify < nChannels; ch_idx_modify++) {
             // Apply modification to meanTempFlat for all channels if a transient was detected anywhere in the frame
-            meanTempFlat[ch_idx_modify] = FORCE_TRANSIENT_TEMP_FLAT;
+  //          meanTempFlat[ch_idx_modify] = FORCE_TRANSIENT_TEMP_FLAT;
             // Or, for per-channel modification (if m_tranLocCurr is directly accessible and needed here):
             // if (m_tranLocCurr[ch_idx_modify] != -1) {
             //     meanTempFlat[ch_idx_modify] = FORCE_TRANSIENT_TEMP_FLAT;
             // }
-        }
-    }
+    //    }
+    //}
     // --- END NEW CODE ---
+
+	// --- FIXED: Use main encoder's filtered transient decisions instead of raw detection ---
+	unsigned ci_temp = 0; // Channel index for accessing element data
+	for (unsigned el = 0; el < m_numElements; el++) {
+		CoreCoderData& coreConfig = *m_elementData[el];
+		const unsigned nrChannels = (coreConfig.elementType & 1) + 1;
+		
+		// Skip LFE channels
+		if (coreConfig.elementType >= ID_USAC_LFE) {
+			ci_temp++;
+			continue;
+		}
+		
+		for (unsigned ch = 0; ch < nrChannels; ch++) {
+			// Only apply SBR response when main encoder confirmed transient was worth switching
+			if (coreConfig.icsInfoCurr[ch].windowSequence == EIGHT_SHORT) {
+				// Conservative SBR response: reduce meanTempFlat by 50% instead of forcing to 0
+				meanTempFlat[ci_temp] = meanTempFlat[ci_temp] / 2;
+			}
+			ci_temp++;
+		}
+	}
 
     for (unsigned el = 0; el < m_numElements; el++)  // element loop
   {
@@ -1564,7 +1507,8 @@ unsigned ExhaleEncoder::quantizationCoding ()  // apply MDCT quantization and en
       s = ci + nrChannels - 1 - 2 * ch; // other channel in stereo
       if ((coreConfig.elementType < ID_USAC_LFE) && (m_shiftValSBR > 0)) // collect SBR data
       {
-        const uint8_t msfVal = (shortWinPrev ? 31 : __max (2, __max (m_meanSpecPrev[ci], meanSpecFlat[ci]) >> 3));
+		  // (remove const):
+		  uint8_t msfVal = (shortWinPrev ? 31 : __max (2, __max (m_meanSpecPrev[ci], meanSpecFlat[ci]) >> 3));
         const uint8_t msfSte = (coreConfig.stereoMode == 0 ? 0 : (coreConfig.icsInfoPrev[s + ch - ci].windowSequence ==
                                  EIGHT_SHORT ? 31 : __max (2, __max (m_meanSpecPrev[s ], meanSpecFlat[s ]) >> 3)));
         int32_t  tmpValSynch = 0;
@@ -1586,20 +1530,50 @@ unsigned ExhaleEncoder::quantizationCoding ()  // apply MDCT quantization and en
 // __max (m_meanTempPrev[ci], meanTempFlat[ci]) >> 3, m_bitRateMode == 0,
 //m_indepFlag, msfSte, tmpValSynch, nSamplesInFrame, &m_coreSignals[ci][1]);
           
-          
-m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (
-  &m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame], // sbrLevels
-  msfVal,                                                    // specFlat5b
-  __max (m_meanTempPrev[ci], meanTempFlat[ci]) >> 3,          // tempFlat5b (this will use your adjusted meanTempFlat)
-  m_bitRateMode == 0,                                        // lr (boolean)
-  m_indepFlag,                                               // ind (boolean)
-  msfSte,                                                    // specFlatSte
-  tmpValSynch,                                               // tmpValSte
-  nSamplesInFrame,                                           // frameSize
-  &m_coreSignals[ci][1]                                      // sbrData
-                                  );
+		  //3. Modify SBR Processing in quantizationCoding()
+		  // Find the existing getSbrEnvelopeAndNoise call and wrap it:
+		  if (m_sibilantDetected[ci] && m_shiftValSBR > 0) {
+			  // SIBILANT SBR PROCESSING
+			  const uint8_t originalMsf = msfVal;
+			  
+			  // Force more noise-like treatment for sibilants
+			  msfVal = __max(msfVal, 30);  // Higher = more noise-like
+			  
+			  // Get finer temporal resolution for better sibilant reconstruction
+			  uint8_t adjustedTempFlat = (__max(m_meanTempPrev[ci], meanTempFlat[ci]) >> 3) / 4;
+			  adjustedTempFlat = __max(adjustedTempFlat, 1);  // Minimum value
+			  
+			 // printf("*** SBR SIBILANT: CH%u, msfVal %u->%u ***\n", ci, originalMsf, msfVal);
+			  
+			  
+			  // ✅ CORRECTED parameter order
+			  m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (
+															  &m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame], // sbrLevels
+															  msfVal,              // specFlat5b (MODIFIED for sibilants)
+															  adjustedTempFlat,    // tempFlat5b (MODIFIED for sibilants)
+															  m_bitRateMode == 0,  // lr (boolean)
+															  m_indepFlag,         // ind (boolean)
+															  msfSte,              // specFlatSte
+															  tmpValSynch,         // tmpValSte
+															  nSamplesInFrame,     // frameSize
+															  &m_coreSignals[ci][1] // sbrData
+															  );
+		  } else {
+			  // NORMAL SBR PROCESSING (original call)
+			  m_coreSignals[ci][0] |= getSbrEnvelopeAndNoise (
+															  &m_coreSignals[ci][nSamplesTempAna - 64 + nSamplesInFrame],
+															  msfVal,
+															  __max (m_meanTempPrev[ci], meanTempFlat[ci]) >> 3,
+															  m_bitRateMode == 0,
+															  m_indepFlag,
+															  msfSte,
+															  tmpValSynch,
+															  nSamplesInFrame,
+															  &m_coreSignals[ci][1]
+															  );
+		  }
 
-        if (ch + 1 == nrChannels) // update the flatness histories
+		  if (ch + 1 == nrChannels) // update the flatness histories
         {
           m_meanSpecPrev[ci] = meanSpecFlat[ci];  m_meanSpecPrev[s] = meanSpecFlat[s];
           m_meanTempPrev[ci] = meanTempFlat[ci];  m_meanTempPrev[s] = meanTempFlat[s];
@@ -2207,6 +2181,8 @@ ExhaleEncoder::ExhaleEncoder (int32_t* const inputPcmData,           unsigned ch
   m_tempIntBuf   = nullptr;
     
     m_targetBandwidth = 0; // ADD THIS LINE to initialize the new variable
+//initialize sibilant detector
+	memset(m_sibilantDetected, false, sizeof(m_sibilantDetected));
 
 
   // initialize all helper structs

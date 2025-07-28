@@ -41,6 +41,9 @@ private:
     void initMinSnr(const unsigned nChannels, const unsigned samplingRate, const long bitrate, const uint8_t bitRateMode, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS]);
     //void initMinSnr (const unsigned nChannels, const unsigned samplingRate, const long bitrate, const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS]);
 
+	bool detectSibilantInSpeech(const int32_t* mdctSpec, const uint16_t* sfbOffsets,
+								unsigned sfb, unsigned samplingRate, uint8_t spectralFlatness);
+
 public:
     
     // constructor
@@ -62,12 +65,12 @@ public:
                                const uint32_t tempAnaStats[USAC_MAX_NUM_CHANNELS],
                                const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,
                                const unsigned lfeChannelIndex, const unsigned ad = 0u, const bool tnsDisabled = false, const long bitrate = 64000, const uint8_t bitRateMode = 0);
-    unsigned imprSfbStepSizes (const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS], const uint8_t numSwbShort,
-                               const int32_t* const mdctSpec[USAC_MAX_NUM_CHANNELS], const unsigned nSamplesInFrame,
-                               const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,
-                               const unsigned firstChannelIndex, const uint8_t* const sfm, const bool commonWindow,
-                               const uint8_t* const sfbStereoData = nullptr, const uint8_t stereoConfig = 0);
-
+	unsigned imprSfbStepSizes(const SfbGroupData* const groupData[USAC_MAX_NUM_CHANNELS], const uint8_t numSwbShort,
+							  const int32_t* const mdctSpec[USAC_MAX_NUM_CHANNELS], const unsigned nSamplesInFrame,
+							  const unsigned nChannels, const unsigned samplingRate, uint32_t* const sfbStepSizes,
+							  const unsigned firstChannelIndex, const uint8_t* const sfm, bool* sibilantDetected,
+							  const bool commonWindow = false, const uint8_t* const sfbStereoData = nullptr,
+							  const uint8_t stereoConfig = 0);
 
 
     // ADD: New method declaration

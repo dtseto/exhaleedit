@@ -246,8 +246,11 @@ private:
   LappedTransform m_transform; // time-frequency transform
 
     unsigned        m_targetBandwidth; // ADD THIS LINE
-    
+    // transient detector
     bool            m_transientDetectedInFrame; // Add this line
+
+	//new sibilant detector
+	bool m_sibilantDetected[USAC_MAX_NUM_CHANNELS];
 
   // helper functions
   unsigned applyTnsToWinGroup (SfbGroupData& grpData, const uint8_t grpIndex, const uint8_t maxSfb, TnsData& tnsData,
@@ -273,6 +276,8 @@ public:
                , const bool useNoiseFilling = true, const bool useEcodisExt = false
 #endif
     );
+	//memset(m_sibilantDetected, false, sizeof(m_sibilantDetected));
+
   // destructor
   virtual ~ExhaleEncoder ();
   // public functions
