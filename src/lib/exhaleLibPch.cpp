@@ -168,14 +168,14 @@ int32_t getSbrEnvelopeAndNoise (int32_t* const sbrLevels, const uint8_t specFlat
     // You'd ideally get a signal here indicating a transient (e.g., from tempFlat5b or a new flag)
     // For example, if tempFlat5b is very low, it indicates a strong transient.
     // You'll need to define a threshold for tempFlat5b or pass a direct boolean flag.
-    const uint8_t TRANSIENT_THRESHOLD_TEMP_FLAT = 10; // Example threshold, needs tuning
+   // const uint8_t TRANSIENT_THRESHOLD_TEMP_FLAT = 10; // Example threshold, needs tuning
 
-    if (tempFlat5b <= TRANSIENT_THRESHOLD_TEMP_FLAT) {
+   // if (tempFlat5b <= TRANSIENT_THRESHOLD_TEMP_FLAT) {
         // A transient is detected, force more envelopes
         // Aim for 4 or 8 envelopes for high transient resolution
-        if (tmpBest < 2) { // Force to at least 4 envelopes
-            tmpBest = 2;
-        }
+     //   if (tmpBest < 2) { // Force to at least 4 envelopes
+      //      tmpBest = 2;
+       // }
         // If you want to always force to 8 envelopes on a transient, you can do:
         // tmpBest = 3;
 
@@ -186,7 +186,7 @@ int32_t getSbrEnvelopeAndNoise (int32_t* const sbrLevels, const uint8_t specFlat
         // of packSbr3BandQuantLevels and how 'sbrData' translates to actual SBR borders.
         // The current code derives borders implicitly from tmpBest (0, 1, 2, 3 -> 1, 2, 4, 8 envelopes).
         // For custom borders, you'd need to modify the loops that populate sbrData[t].
-    }
+    //}
     // --- END NEW CODE ---
 
     

@@ -1316,6 +1316,8 @@ unsigned ExhaleEncoder::quantizationCoding ()  // apply MDCT quantization and en
       char* const arithTuples = entrCoder.arithGetTuplePtr ();
       uint8_t sfIdxPred = UCHAR_MAX;
 
+	//	uint32_t estimBitCount = 0; // <<< ADD THE LINE HERE
+
       if ((errorValue > 0) || (arithTuples == nullptr))
       {
         return 0; // an internal error

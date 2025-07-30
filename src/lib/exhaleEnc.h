@@ -152,7 +152,16 @@ static const uint8_t tnsScaleFactorBandLimit[2 /*long/short*/][USAC_NUM_FREQ_TAB
   {31, 34, 51 /*to be corrected to 42 (44.1) and 40 (48 kHz)!*/, 47, 43, 40}, {9, 10, 14, 15, 15, 15}
 };
 
-static const uint8_t sbrRateOffset[10] = {7, 6, 6, 8, 7, 8, 9, 9, 9, 9}; // used for scaleSBR
+// NEW: Adaptive SBR bit reservation based on bitrate
+// Low bitrates (0-2): ~15%
+// Mid bitrates (3-6): ~20-25%
+// High bitrates (7-9): ~25-30%
+//static const uint8_t sbrRateOffset[10] = {4, 4, 5, 6, 6, 7, 8, 8, 9, 9};
+// 0-2 10%
+static const uint8_t sbrRateOffset[10] = {3, 3, 4, 6, 6, 7, 8, 8, 9, 9};
+
+// below is old 25% reserve
+//static const uint8_t sbrRateOffset[10] = {7, 6, 6, 8, 7, 8, 9, 9, 9, 9}; // used for scaleSBR
 
 // scale_factor_grouping map
 // group lengths based on transient location:  1133, 1115, 2114, 3113, 4112, 5111, 3311, 1331
